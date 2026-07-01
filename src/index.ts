@@ -5,6 +5,7 @@ export type {
   BankedResetCreditEventEvidence,
   BankedResetCreditEventKind,
   BankedResetCreditObservation,
+  BankedResetCreditPublicGrantSeed,
   CodexAccountRateLimitsReadOptions,
   CodexAccountRateLimitsSnapshot,
   CodexCreditsSnapshot,
@@ -24,6 +25,7 @@ export type {
 export {
   analyzeBankedResetCreditObservations,
   createBankedResetCreditObservationFromSnapshot,
+  DEFAULT_BANKED_RESET_CREDIT_PUBLIC_GRANT_SEEDS,
   normalizeCodexAccountRateLimitsReadResult,
   readCodexAccountRateLimits
 } from "./banked-reset-credits.js";

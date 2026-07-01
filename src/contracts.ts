@@ -140,10 +140,17 @@ export interface BankedResetCreditObservation {
 export interface BankedResetCreditAnalysisOptions {
   validityDays?: number;
   expirationSafetyMarginDays?: number;
+  publicGrantSeeds?: BankedResetCreditPublicGrantSeed[];
 }
 
 export type BankedResetCreditEventKind = "grant" | "use" | "expiration" | "decrease-unknown";
-export type BankedResetCreditActiveCreditBasis = "observed-grant" | "existing-at-first-observation";
+export type BankedResetCreditActiveCreditBasis = "observed-grant" | "public-grant" | "existing-at-first-observation";
+
+export interface BankedResetCreditPublicGrantSeed {
+  id: string;
+  grantedAt: string;
+  sourceId?: string | null;
+}
 
 export interface BankedResetCreditEventEvidence {
   beforeAvailableCount: number;

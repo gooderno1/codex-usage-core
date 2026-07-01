@@ -14,7 +14,7 @@
 - 在 `QuotaResetEvent` 中补充 `beforeWindowMinutes / afterWindowMinutes / boundaryAt`，用于追踪 reset 后窗口起点和过期时间。
 - 在 `usageSegments` 中补充 `windowStartedAt / expiresAt / startedByResetAt / closedByResetAt`，用于追踪每段额度使用时间和被哪次 reset 开启或截止。
 - 通过 Codex 本地 app-server 只读接口 `account/rateLimits/read` 读取 `rateLimitResetCredits.availableCount`，用于监控 OpenAI 赠送的 banked reset credit 当前可用次数。
-- 提供 `analyzeBankedResetCreditObservations`，基于多次 `availableCount` 采样推断获得次数、使用次数、过期候选、未知减少和当前逐个可用 credit 明细。
+- 提供 `analyzeBankedResetCreditObservations`，基于公开发放事件和多次 `availableCount` 采样推断获得次数、使用次数、过期候选、未知减少和当前逐个可用 credit 明细。
 - 提供 `codex-usage inspect-reset <snapshot.json>` CLI，用于检查快照中的 reset 事件证据。
 - 提供 `codex-usage inspect-banked-reset` CLI，用于只读检查当前 Codex app-server 返回的 banked reset credit 可用次数。
 
@@ -52,15 +52,21 @@ banked reset credit 口径：
 - `rateLimitResetCredits.availableCount` 来自 Codex 本地 app-server 只读方法 `account/rateLimits/read`，表示当前可用的 banked Codex rate-limit reset 数量。
 - 本包不会调用 `account/rateLimitResetCredit/consume`，不会消耗用户的 banked reset credit。
 - 当前 Codex app-server schema 只暴露 `availableCount`，没有逐笔 `grantedAt / expiresAt / usedAt` 明细。
-- `analyzeBankedResetCreditObservations` 只基于相邻采样差值推断：
+- OpenAI 公开资料说明 banked Codex rate-limit reset 授予后 `30` 天可用；本包默认按 `30d` 估算过期时间，并允许通过 `validityDays` 覆盖。
+- `analyzeBankedResetCreditObservations` 会优先用仍在有效期内的公开发放事件为首次已有库存补种子：
+  - `2026-06-11T00:00:00.000Z`：Codex app `26.609` rate-limit reset banking 上线时面向 Plus / Pro 用户的一次 free reset。
+  - `2026-06-30T00:00:00.000Z`：Codex 异常消耗修复后的公开补偿 reset，时间按公开消息保守提前到当天 `00:00 UTC`。
+  - 这些种子只用于 `activeCredits[]` 的 `public-grant` 估算，不表示接口返回了私有账号的逐笔明细；调用方可传入 `publicGrantSeeds: []` 关闭默认种子。
+- `analyzeBankedResetCreditObservations` 同时基于相邻采样差值推断：
   - `grant`：`availableCount` 增加，`estimatedExpiresAt = observedAt + 30d`，该过期时间是按官方有效期规则估算，不是接口原始字段。
   - `use`：`availableCount` 减少，且同一采样区间内 5H 或周额度窗口出现 `usedPercent` 回落、`resetsAt` 后移。
   - `expiration`：`availableCount` 减少，未观察到额度窗口 reset，且存在已推断 grant 到达估算过期时间。
   - `decrease-unknown`：`availableCount` 减少，但证据不足以区分使用或过期。
 - `activeCredits[]` 表示当前仍可用的逐个 banked reset credit：
-  - `acquiredAt`：只有在采样中观测到 `availableCount` 增加时才有值，表示推断获得时间。
+  - `acquiredAt`：采样中观测到 `availableCount` 增加时取当前采样时间；命中公开 seed 时取公开发放时间；其他首次已有库存仍为空。
   - `estimatedExpiresAt`：按 `acquiredAt + 30d` 估算。
   - `safeEstimatedExpiresAt`：默认按 `estimatedExpiresAt - 1d` 输出，供下游优先展示，避免用户卡着最后时刻错过使用机会。
+  - `estimateBasis=public-grant` 表示来自公开发放事件种子，时间是保守估算。
   - `estimateBasis=existing-at-first-observation` 表示首次采样时已经存在的 credit，接口无法反推获取时间和真实过期时间；此类条目的 `safeEstimatedExpiresAt` 取首次观测时间，下游应展示为“建议尽快使用”。
 
 `comparisonScope`：

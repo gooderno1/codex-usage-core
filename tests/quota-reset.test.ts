@@ -176,6 +176,29 @@ function rateLimitSnapshot(
   assert.equal(result.activeCredits[0]?.estimateBasis, "existing-at-first-observation");
 }
 
+{
+  const result = analyzeBankedResetCreditObservations([
+    {
+      observedAt: "2026-07-02T00:00:00.000Z",
+      availableCount: 2,
+      rateLimits: rateLimitSnapshot(30, "2026-07-05T00:00:00.000Z")
+    }
+  ]);
+
+  assert.equal(result.currentAvailableCount, 2);
+  assert.equal(result.activeCredits.length, 2);
+  assert.equal(result.activeCredits[0]?.estimateBasis, "public-grant");
+  assert.equal(result.activeCredits[0]?.acquiredAt, "2026-06-11T00:00:00.000Z");
+  assert.equal(result.activeCredits[0]?.estimatedExpiresAt, "2026-07-11T00:00:00.000Z");
+  assert.equal(result.activeCredits[0]?.safeEstimatedExpiresAt, "2026-07-10T00:00:00.000Z");
+  assert.equal(result.activeCredits[1]?.estimateBasis, "public-grant");
+  assert.equal(result.activeCredits[1]?.acquiredAt, "2026-06-30T00:00:00.000Z");
+  assert.equal(result.activeCredits[1]?.estimatedExpiresAt, "2026-07-30T00:00:00.000Z");
+  assert.equal(result.activeCredits[1]?.safeEstimatedExpiresAt, "2026-07-29T00:00:00.000Z");
+  assert.equal(result.nextEstimatedExpiresAt, "2026-07-11T00:00:00.000Z");
+  assert.equal(result.nextSafeEstimatedExpiresAt, "2026-07-10T00:00:00.000Z");
+}
+
 async function runAppServerReadTest() {
   const fakeServer = `
 const bucket = {

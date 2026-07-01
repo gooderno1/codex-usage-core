@@ -3,8 +3,10 @@ import type {
   BankedResetCreditAnalysisOptions,
   BankedResetCreditAnalysisResult,
   BankedResetCreditActiveCredit,
+  BankedResetCreditActiveCreditBasis,
   BankedResetCreditEvent,
   BankedResetCreditObservation,
+  BankedResetCreditPublicGrantSeed,
   CodexAccountRateLimitsReadOptions,
   CodexAccountRateLimitsSnapshot,
   CodexCreditsSnapshot,
@@ -17,6 +19,19 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_VALIDITY_DAYS = 30;
 const DEFAULT_EXPIRATION_SAFETY_MARGIN_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export const DEFAULT_BANKED_RESET_CREDIT_PUBLIC_GRANT_SEEDS: BankedResetCreditPublicGrantSeed[] = [
+  {
+    id: "codex-banking-launch-free-reset-2026-06-11",
+    grantedAt: "2026-06-11T00:00:00.000Z",
+    sourceId: "openai-codex-app-26.609-launch"
+  },
+  {
+    id: "codex-usage-incident-compensation-2026-06-30",
+    grantedAt: "2026-06-30T00:00:00.000Z",
+    sourceId: "public-codex-usage-incident-compensation"
+  }
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -391,34 +406,70 @@ function removeEstimatedCredits(credits: EstimatedCredit[], count: number, expir
 }
 
 function createKnownCredit(
-  observedAt: string,
-  grantIndex: number,
+  acquiredAt: string,
+  firstObservedAt: string,
+  grantIndex: number | string,
   validityMs: number,
   safetyMarginMs: number,
-  sourceId: string | null | undefined
+  sourceId: string | null | undefined,
+  estimateBasis: Exclude<BankedResetCreditActiveCreditBasis, "existing-at-first-observation"> = "observed-grant"
 ): EstimatedCredit | null {
-  const observedMs = parseIsoMs(observedAt);
-  if (observedMs === null) {
+  const acquiredMs = parseIsoMs(acquiredAt);
+  const firstObservedMs = parseIsoMs(firstObservedAt);
+  if (acquiredMs === null || firstObservedMs === null) {
     return null;
   }
 
-  const estimatedExpiresAtMs = observedMs + validityMs;
+  const estimatedExpiresAtMs = acquiredMs + validityMs;
+  const safeFloorMs = estimateBasis === "public-grant" ? firstObservedMs : acquiredMs;
   const safeEstimatedExpiresAtMs = Math.min(
     estimatedExpiresAtMs,
-    Math.max(observedMs, estimatedExpiresAtMs - safetyMarginMs)
+    Math.max(safeFloorMs, estimatedExpiresAtMs - safetyMarginMs)
   );
 
   return {
-    id: `grant:${observedAt}:${grantIndex}`,
-    acquiredAt: observedAt,
-    firstObservedAt: observedAt,
+    id: `${estimateBasis}:${acquiredAt}:${grantIndex}`,
+    acquiredAt,
+    firstObservedAt,
     estimatedExpiresAt: new Date(estimatedExpiresAtMs).toISOString(),
     safeEstimatedExpiresAt: new Date(safeEstimatedExpiresAtMs).toISOString(),
     estimatedExpiresAtMs,
     safeEstimatedExpiresAtMs,
-    estimateBasis: "observed-grant",
+    estimateBasis,
     sourceId: sourceId ?? null
   };
+}
+
+function createPublicSeedCredits(
+  firstObservation: BankedResetCreditObservation,
+  validityMs: number,
+  safetyMarginMs: number,
+  publicGrantSeeds: BankedResetCreditPublicGrantSeed[]
+) {
+  const firstObservedMs = parseIsoMs(firstObservation.observedAt);
+  if (firstObservedMs === null) {
+    return [];
+  }
+
+  return publicGrantSeeds
+    .map((seed) => {
+      const grantedMs = parseIsoMs(seed.grantedAt);
+      if (grantedMs === null || grantedMs > firstObservedMs || grantedMs + validityMs <= firstObservedMs) {
+        return null;
+      }
+
+      return createKnownCredit(
+        seed.grantedAt,
+        firstObservation.observedAt,
+        seed.id,
+        validityMs,
+        safetyMarginMs,
+        seed.sourceId ?? firstObservation.sourceId,
+        "public-grant"
+      );
+    })
+    .filter((credit): credit is EstimatedCredit => credit !== null)
+    .sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
 }
 
 function createExistingCredit(
@@ -463,6 +514,7 @@ export function analyzeBankedResetCreditObservations(
   const validityMs = (options.validityDays ?? DEFAULT_VALIDITY_DAYS) * MS_PER_DAY;
   const safetyMarginMs =
     Math.max(0, options.expirationSafetyMarginDays ?? DEFAULT_EXPIRATION_SAFETY_MARGIN_DAYS) * MS_PER_DAY;
+  const publicGrantSeeds = options.publicGrantSeeds ?? DEFAULT_BANKED_RESET_CREDIT_PUBLIC_GRANT_SEEDS;
   const ordered = observations
     .filter((observation) => Number.isFinite(new Date(observation.observedAt).getTime()))
     .slice()
@@ -473,8 +525,20 @@ export function analyzeBankedResetCreditObservations(
 
   const firstObservation = ordered[0];
   if (firstObservation) {
-    for (let index = 0; index < firstObservation.availableCount; index += 1) {
-      const credit = createExistingCredit(firstObservation.observedAt, index + 1, firstObservation.sourceId);
+    const publicSeedCredits = createPublicSeedCredits(
+      firstObservation,
+      validityMs,
+      safetyMarginMs,
+      publicGrantSeeds
+    ).slice(0, firstObservation.availableCount);
+    estimatedCredits.push(...publicSeedCredits);
+
+    for (let index = publicSeedCredits.length; index < firstObservation.availableCount; index += 1) {
+      const credit = createExistingCredit(
+        firstObservation.observedAt,
+        index - publicSeedCredits.length + 1,
+        firstObservation.sourceId
+      );
       if (credit) {
         estimatedCredits.push(credit);
       }
@@ -497,10 +561,12 @@ export function analyzeBankedResetCreditObservations(
         for (let creditIndex = 0; creditIndex < delta; creditIndex += 1) {
           const credit = createKnownCredit(
             current.observedAt,
+            current.observedAt,
             creditIndex + 1,
             validityMs,
             safetyMarginMs,
-            current.sourceId
+            current.sourceId,
+            "observed-grant"
           );
           if (credit) {
             estimatedCredits.push(credit);

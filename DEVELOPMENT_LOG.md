@@ -1,5 +1,16 @@
 # DEVELOPMENT LOG
 
+## [2026-07-02] v0.1.0-dev.6 feat: 用公开 seed 推断赠送重置过期时间
+
+- 开发原因：用户指出 banked reset credit 已有官方公开 `30` 天有效期口径，且当前本机可用的 `2` 次可以分别对应公开发放事件；首次观测已有库存不应全部显示为无法推断。
+- 实现方式：将版本从 `v0.1.0-dev.5` 提升到 `v0.1.0-dev.6`；新增 `BankedResetCreditPublicGrantSeed` 与 `estimateBasis=public-grant`；`analyzeBankedResetCreditObservations` 默认使用两个公开 seed：`2026-06-11T00:00:00.000Z` 的 Codex banking 上线 free reset，以及 `2026-06-30T00:00:00.000Z` 的异常消耗修复补偿 reset；首次观测已有库存时优先匹配仍在 `30d` 有效期内的公开 seed，匹配不上的数量仍回退为 `existing-at-first-observation`。
+- 适用范围：仅用于 Codex app-server 只读 `rateLimitResetCredits.availableCount` 已返回可用次数但不返回逐笔时间的场景；公开 seed 可通过 `publicGrantSeeds: []` 关闭或由下游传入替代列表。
+- 触发条件：首次有效观测的 `availableCount > 0`，且公开 seed 的 `grantedAt <= observedAt < grantedAt + validityDays` 时，生成 `public-grant` active credit；后续相邻采样增加仍按实际观测时间生成 `observed-grant`。
+- 排除条件：公开 seed 已过期、发放时间晚于首次观测、或可用次数超过公开 seed 数量时，不强行归因；剩余条目继续标记为首次观测已有库存。
+- 关键字段：`activeCredits[].acquiredAt` 对 `public-grant` 取公开 seed 时间；`estimatedExpiresAt = acquiredAt + 30d`；`safeEstimatedExpiresAt` 默认提前 `1d`，如果首次观测已晚于安全提醒时间则取首次观测时间，提示尽快使用。
+- 验证样例：脱敏测试中 `2026-07-02 available=2` 输出两条 `public-grant`，分别为 `2026-06-11 -> 2026-07-11` 和 `2026-06-30 -> 2026-07-30`，保守提醒时间分别为 `2026-07-10` 和 `2026-07-29`；`2030-01-10 available=2` 因公开 seed 已过期，仍输出 `existing-at-first-observation`。
+- 验证方式：执行 `npm run test`，覆盖 TypeScript build、原 reset 引擎、banked reset credit 差分分析、公开 seed 首次库存推断和假 app-server 读取测试；执行 `git diff --check`，仅有 Windows 换行提示。
+
 ## [2026-07-01] v0.1.0-dev.5 feat: 输出 banked reset 逐个明细
 
 - 开发原因：下游需要在总览和 Codex 页面展示每个可用 banked reset credit 的获取时间和预期过期时间；过期提醒需要保守提前，避免用户按最后时刻安排导致错过使用机会。
