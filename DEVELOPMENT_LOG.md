@@ -1,5 +1,17 @@
 # DEVELOPMENT LOG
 
+## [2026-07-01] v0.1.0-dev.4 feat: 读取 banked reset credit 可用次数
+
+- 开发原因：用户要监控 OpenAI 赠送的 Codex banked rate-limit reset 可用次数、推断获得次数、使用时间和一个月有效期；这类数据不是本地 session `rate_limits` reset 事件，必须从 Codex 产品层数据源读取。
+- 实现方式：新增 `readCodexAccountRateLimits`，通过 Codex 本地 app-server JSON-RPC 只读方法 `account/rateLimits/read` 读取 `rateLimitResetCredits.availableCount`、`rateLimits` 和 `rateLimitsByLimitId`；新增 `createBankedResetCreditObservationFromSnapshot`，把 app-server 快照转换成可入库观测；新增 `analyzeBankedResetCreditObservations`，基于连续采样的 `availableCount` 差值推断 `grant / use / expiration / decrease-unknown` 事件；新增 `CodexAccountRateLimitsSnapshot`、`CodexRateLimitResetCreditsSummary`、`BankedResetCreditObservation`、`BankedResetCreditEvent` 等共享类型；CLI 新增 `codex-usage inspect-banked-reset`。
+- 适用范围：适用于本机已登录 Codex 且 `codex app-server --stdio` 可正常访问 `account/rateLimits/read` 的环境；该接口是只读读取，不调用 `account/rateLimitResetCredit/consume`，不会消耗可用 reset。
+- 触发条件：`availableCount` 相邻采样增加时推断 `grant`；相邻采样减少且同一区间内任一额度桶的 `primary / secondary` 出现 `usedPercent` 回落、`resetsAt` 后移时推断 `use`；相邻采样减少、未观测到额度窗口 reset，且存在已推断 grant 到达 `observedAt + 30d` 估算过期时间时推断 `expiration`；其余减少归为 `decrease-unknown`。
+- 排除条件：当前 Codex app-server schema 只暴露 `availableCount`，不暴露逐笔 `grantedAt / expiresAt / usedAt`；因此过期时间只能以 `estimatedExpiresAt` 表示，不能当作官方返回字段；首次观测已有的可用次数不能反推来源和精确过期时间。
+- 关键字段：`rateLimitResetCredits.availableCount` 表示当前可用 banked reset credit 数量；`BankedResetCreditEvent.estimatedExpiresAt` 表示按 grant 观测时间加默认 `30d` 推导的估算过期时间；`BankedResetCreditEvent.evidence.affectedLimitIds` 记录推断使用时发生 reset 的额度桶。
+- 验证样例：脱敏测试中 `2030-01-01 available=0 -> 2030-01-02 available=2` 输出 `grant count=2`、`estimatedExpiresAt=2030-02-01T00:00:00.000Z`；`2030-01-03 available=1` 且 `codex.primary.resetsAt` 后移、`usedPercent` 回落时输出 `use count=1`；`2030-02-02 available=0` 且无 reset 证据时输出 `expiration count=1`。
+- 当前结果：核心包可以稳定读取当前可用 banked reset credit 次数，并用后续采样推断获得/使用/过期候选；输出仍不包含原始 Codex session 正文、用户输入、模型输出、账号邮箱、token 或原始 app-server 响应。
+- 验证方式：执行 `npm run build`；执行 `npm run test`，覆盖原 reset 引擎、banked reset credit 差分分析和假 app-server 读取；执行真实 app-server 只读抽查，当前返回 `rateLimitResetCredits.availableCount=2`，并确认 `codex / codex_bengalfox` 两个额度桶可读；待最终提交前执行 `git diff --check`。
+
 ## [2026-07-01] v0.1.0-dev.3 fix: 纠正额度重置字段命名
 
 - 开发原因：上一轮需求中的“充值次数”是用户笔误，Codex 本地数据中没有独立的官方充值次数字段；`v0.1.0-dev.2` 将稳定确认的 reset 映射为 `rechargeCount / rechargeEvents` 会误导为真实充值数据。

@@ -1,6 +1,6 @@
 # codex-usage-core
 
-`codex-usage-core` 是 `codex-companion` 与 `dev-ledger` 共享的 Codex 本地用量核心包，用于统一 token 用量、额度周期和 reset 检测规则。
+`codex-usage-core` 是 `codex-companion` 与 `dev-ledger` 共享的 Codex 本地用量核心包，用于统一 token 用量、额度周期、reset 检测和 banked reset credit 观测规则。
 
 本项目是非官方工具，不隶属于 OpenAI。核心包只处理本机解析后的结构化数据，不要求上传原始 Codex session、用户输入正文、模型输出正文或仓库源码。
 
@@ -13,16 +13,29 @@
 - 对候选执行 `30min` 延迟、`6h` 确认窗口、`15min` 漂移排除和边界去重。
 - 在 `QuotaResetEvent` 中补充 `beforeWindowMinutes / afterWindowMinutes / boundaryAt`，用于追踪 reset 后窗口起点和过期时间。
 - 在 `usageSegments` 中补充 `windowStartedAt / expiresAt / startedByResetAt / closedByResetAt`，用于追踪每段额度使用时间和被哪次 reset 开启或截止。
+- 通过 Codex 本地 app-server 只读接口 `account/rateLimits/read` 读取 `rateLimitResetCredits.availableCount`，用于监控 OpenAI 赠送的 banked reset credit 当前可用次数。
+- 提供 `analyzeBankedResetCreditObservations`，基于多次 `availableCount` 采样推断获得次数、使用次数、过期候选和未知减少。
 - 提供 `codex-usage inspect-reset <snapshot.json>` CLI，用于检查快照中的 reset 事件证据。
+- 提供 `codex-usage inspect-banked-reset` CLI，用于只读检查当前 Codex app-server 返回的 banked reset credit 可用次数。
 
 ## 使用方式
 
 ```ts
-import { analyzeQuotaObservations } from "@lifeinhand/codex-usage-core";
+import {
+  analyzeBankedResetCreditObservations,
+  analyzeQuotaObservations,
+  createBankedResetCreditObservationFromSnapshot,
+  readCodexAccountRateLimits
+} from "@lifeinhand/codex-usage-core";
 
 const result = analyzeQuotaObservations(observations, {
   comparisonScope: "timeline"
 });
+
+const snapshot = await readCodexAccountRateLimits();
+const bankedResetResult = analyzeBankedResetCreditObservations([
+  createBankedResetCreditObservationFromSnapshot(snapshot)
+]);
 ```
 
 reset 口径：
@@ -33,6 +46,17 @@ reset 口径：
 - `resetEvents[].afterWindowResetsAt` 表示 reset 后额度窗口的过期时间。
 - `usageSegments[].startAt / endAt / usedPercent` 记录每段 reset 前后的额度使用区间和最高已用百分比。
 - 本包只输出结构化百分比和时间，不输出原始 session 正文、用户输入、模型输出或仓库源码。
+
+banked reset credit 口径：
+
+- `rateLimitResetCredits.availableCount` 来自 Codex 本地 app-server 只读方法 `account/rateLimits/read`，表示当前可用的 banked Codex rate-limit reset 数量。
+- 本包不会调用 `account/rateLimitResetCredit/consume`，不会消耗用户的 banked reset credit。
+- 当前 Codex app-server schema 只暴露 `availableCount`，没有逐笔 `grantedAt / expiresAt / usedAt` 明细。
+- `analyzeBankedResetCreditObservations` 只基于相邻采样差值推断：
+  - `grant`：`availableCount` 增加，`estimatedExpiresAt = observedAt + 30d`，该过期时间是按官方有效期规则估算，不是接口原始字段。
+  - `use`：`availableCount` 减少，且同一采样区间内 5H 或周额度窗口出现 `usedPercent` 回落、`resetsAt` 后移。
+  - `expiration`：`availableCount` 减少，未观察到额度窗口 reset，且存在已推断 grant 到达估算过期时间。
+  - `decrease-unknown`：`availableCount` 减少，但证据不足以区分使用或过期。
 
 `comparisonScope`：
 

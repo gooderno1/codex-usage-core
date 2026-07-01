@@ -1,4 +1,16 @@
 export type {
+  BankedResetCreditAnalysisOptions,
+  BankedResetCreditAnalysisResult,
+  BankedResetCreditEvent,
+  BankedResetCreditEventEvidence,
+  BankedResetCreditEventKind,
+  BankedResetCreditObservation,
+  CodexAccountRateLimitsReadOptions,
+  CodexAccountRateLimitsSnapshot,
+  CodexCreditsSnapshot,
+  CodexRateLimitResetCreditsSummary,
+  CodexRateLimitSnapshot,
+  CodexRateLimitWindowSnapshot,
   QuotaAnalysisOptions,
   QuotaAnalysisResult,
   QuotaCycleObservation,
@@ -8,6 +20,13 @@ export type {
   QuotaResetEvidence,
   QuotaUsageSegment
 } from "./contracts.js";
+
+export {
+  analyzeBankedResetCreditObservations,
+  createBankedResetCreditObservationFromSnapshot,
+  normalizeCodexAccountRateLimitsReadResult,
+  readCodexAccountRateLimits
+} from "./banked-reset-credits.js";
 
 export {
   analyzeQuotaObservations,

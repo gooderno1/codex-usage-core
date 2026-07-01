@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
+import { readCodexAccountRateLimits } from "./banked-reset-credits.js";
 import { analyzeQuotaObservations } from "./quota-reset.js";
 import type { QuotaCycleObservation } from "./contracts.js";
 
 function printUsage() {
-  console.log("用法：codex-usage inspect-reset <snapshot.json>");
+  console.log("用法：");
+  console.log("  codex-usage inspect-reset <snapshot.json>");
+  console.log("  codex-usage inspect-banked-reset");
 }
 
 function collectObservationsFromSnapshot(snapshot: unknown): QuotaCycleObservation[] {
@@ -40,15 +43,28 @@ function collectObservationsFromSnapshot(snapshot: unknown): QuotaCycleObservati
   return [];
 }
 
-const [, , command, target] = process.argv;
+async function main() {
+  const [, , command, target] = process.argv;
 
-if (command !== "inspect-reset" || !target) {
-  printUsage();
-  process.exitCode = 1;
-} else {
+  if (command === "inspect-banked-reset") {
+    console.log(JSON.stringify(await readCodexAccountRateLimits(), null, 2));
+    return;
+  }
+
+  if (command !== "inspect-reset" || !target) {
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
   const snapshot = JSON.parse(readFileSync(target, "utf8")) as unknown;
   const observations = collectObservationsFromSnapshot(snapshot);
   if (observations.length > 0) {
     console.log(JSON.stringify(analyzeQuotaObservations(observations, { comparisonScope: "timeline" }), null, 2));
   }
 }
+
+void main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});
