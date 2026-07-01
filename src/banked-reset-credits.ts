@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import type {
   BankedResetCreditAnalysisOptions,
   BankedResetCreditAnalysisResult,
+  BankedResetCreditActiveCredit,
   BankedResetCreditEvent,
   BankedResetCreditObservation,
   CodexAccountRateLimitsReadOptions,
@@ -14,6 +15,7 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_VALIDITY_DAYS = 30;
+const DEFAULT_EXPIRATION_SAFETY_MARGIN_DAYS = 1;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -348,14 +350,29 @@ function getAffectedLimitIds(previous: BankedResetCreditObservation, current: Ba
   return [...affected].sort();
 }
 
-interface EstimatedCredit {
+interface EstimatedCredit extends BankedResetCreditActiveCredit {
   estimatedExpiresAtMs: number;
-  estimatedExpiresAt: string;
+  safeEstimatedExpiresAtMs: number;
+}
+
+function creditSortTime(credit: EstimatedCredit) {
+  return credit.safeEstimatedExpiresAtMs;
+}
+
+function sortEstimatedCredits(credits: EstimatedCredit[]) {
+  credits.sort((a, b) => {
+    const expiresDiff = creditSortTime(a) - creditSortTime(b);
+    if (expiresDiff !== 0) {
+      return expiresDiff;
+    }
+
+    return new Date(a.firstObservedAt).getTime() - new Date(b.firstObservedAt).getTime();
+  });
 }
 
 function removeEstimatedCredits(credits: EstimatedCredit[], count: number, expiredOnly: boolean, nowMs: number) {
   let remaining = count;
-  credits.sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
+  sortEstimatedCredits(credits);
 
   for (let index = 0; index < credits.length && remaining > 0; ) {
     const credit = credits[index];
@@ -373,11 +390,79 @@ function removeEstimatedCredits(credits: EstimatedCredit[], count: number, expir
   }
 }
 
+function createKnownCredit(
+  observedAt: string,
+  grantIndex: number,
+  validityMs: number,
+  safetyMarginMs: number,
+  sourceId: string | null | undefined
+): EstimatedCredit | null {
+  const observedMs = parseIsoMs(observedAt);
+  if (observedMs === null) {
+    return null;
+  }
+
+  const estimatedExpiresAtMs = observedMs + validityMs;
+  const safeEstimatedExpiresAtMs = Math.min(
+    estimatedExpiresAtMs,
+    Math.max(observedMs, estimatedExpiresAtMs - safetyMarginMs)
+  );
+
+  return {
+    id: `grant:${observedAt}:${grantIndex}`,
+    acquiredAt: observedAt,
+    firstObservedAt: observedAt,
+    estimatedExpiresAt: new Date(estimatedExpiresAtMs).toISOString(),
+    safeEstimatedExpiresAt: new Date(safeEstimatedExpiresAtMs).toISOString(),
+    estimatedExpiresAtMs,
+    safeEstimatedExpiresAtMs,
+    estimateBasis: "observed-grant",
+    sourceId: sourceId ?? null
+  };
+}
+
+function createExistingCredit(
+  observedAt: string,
+  creditIndex: number,
+  sourceId: string | null | undefined
+): EstimatedCredit | null {
+  const observedMs = parseIsoMs(observedAt);
+  if (observedMs === null) {
+    return null;
+  }
+
+  return {
+    id: `existing:${observedAt}:${creditIndex}`,
+    acquiredAt: null,
+    firstObservedAt: observedAt,
+    estimatedExpiresAt: null,
+    safeEstimatedExpiresAt: observedAt,
+    estimatedExpiresAtMs: Number.POSITIVE_INFINITY,
+    safeEstimatedExpiresAtMs: observedMs,
+    estimateBasis: "existing-at-first-observation",
+    sourceId: sourceId ?? null
+  };
+}
+
+function serializeActiveCredit(credit: EstimatedCredit): BankedResetCreditActiveCredit {
+  return {
+    id: credit.id,
+    acquiredAt: credit.acquiredAt,
+    firstObservedAt: credit.firstObservedAt,
+    estimatedExpiresAt: credit.estimatedExpiresAt,
+    safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt,
+    estimateBasis: credit.estimateBasis,
+    sourceId: credit.sourceId ?? null
+  };
+}
+
 export function analyzeBankedResetCreditObservations(
   observations: BankedResetCreditObservation[],
   options: BankedResetCreditAnalysisOptions = {}
 ): BankedResetCreditAnalysisResult {
   const validityMs = (options.validityDays ?? DEFAULT_VALIDITY_DAYS) * MS_PER_DAY;
+  const safetyMarginMs =
+    Math.max(0, options.expirationSafetyMarginDays ?? DEFAULT_EXPIRATION_SAFETY_MARGIN_DAYS) * MS_PER_DAY;
   const ordered = observations
     .filter((observation) => Number.isFinite(new Date(observation.observedAt).getTime()))
     .slice()
@@ -385,6 +470,16 @@ export function analyzeBankedResetCreditObservations(
 
   const events: BankedResetCreditEvent[] = [];
   const estimatedCredits: EstimatedCredit[] = [];
+
+  const firstObservation = ordered[0];
+  if (firstObservation) {
+    for (let index = 0; index < firstObservation.availableCount; index += 1) {
+      const credit = createExistingCredit(firstObservation.observedAt, index + 1, firstObservation.sourceId);
+      if (credit) {
+        estimatedCredits.push(credit);
+      }
+    }
+  }
 
   for (let index = 1; index < ordered.length; index += 1) {
     const previous = ordered[index - 1];
@@ -400,10 +495,16 @@ export function analyzeBankedResetCreditObservations(
       const estimatedExpiresAt = toIsoStringOrNull(currentMs + validityMs);
       if (estimatedExpiresAt) {
         for (let creditIndex = 0; creditIndex < delta; creditIndex += 1) {
-          estimatedCredits.push({
-            estimatedExpiresAtMs: currentMs + validityMs,
-            estimatedExpiresAt
-          });
+          const credit = createKnownCredit(
+            current.observedAt,
+            creditIndex + 1,
+            validityMs,
+            safetyMarginMs,
+            current.sourceId
+          );
+          if (credit) {
+            estimatedCredits.push(credit);
+          }
         }
       }
 
@@ -462,6 +563,11 @@ export function analyzeBankedResetCreditObservations(
   const activeExpirations = estimatedCredits
     .filter((credit) => credit.estimatedExpiresAtMs > latestObservedMs)
     .sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
+  const activeSafeExpirations = estimatedCredits
+    .filter((credit) => credit.safeEstimatedExpiresAtMs > latestObservedMs)
+    .sort((a, b) => a.safeEstimatedExpiresAtMs - b.safeEstimatedExpiresAtMs);
+  const activeCredits = estimatedCredits.slice();
+  sortEstimatedCredits(activeCredits);
 
   return {
     currentAvailableCount: ordered.at(-1)?.availableCount ?? null,
@@ -474,6 +580,8 @@ export function analyzeBankedResetCreditObservations(
       .filter((event) => event.kind === "decrease-unknown")
       .reduce((sum, event) => sum + event.count, 0),
     nextEstimatedExpiresAt: activeExpirations[0]?.estimatedExpiresAt ?? null,
+    nextSafeEstimatedExpiresAt: activeSafeExpirations[0]?.safeEstimatedExpiresAt ?? null,
+    activeCredits: activeCredits.map(serializeActiveCredit),
     events
   };
 }

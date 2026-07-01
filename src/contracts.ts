@@ -139,9 +139,11 @@ export interface BankedResetCreditObservation {
 
 export interface BankedResetCreditAnalysisOptions {
   validityDays?: number;
+  expirationSafetyMarginDays?: number;
 }
 
 export type BankedResetCreditEventKind = "grant" | "use" | "expiration" | "decrease-unknown";
+export type BankedResetCreditActiveCreditBasis = "observed-grant" | "existing-at-first-observation";
 
 export interface BankedResetCreditEventEvidence {
   beforeAvailableCount: number;
@@ -162,6 +164,16 @@ export interface BankedResetCreditEvent {
   evidence: BankedResetCreditEventEvidence;
 }
 
+export interface BankedResetCreditActiveCredit {
+  id: string;
+  acquiredAt: string | null;
+  firstObservedAt: string;
+  estimatedExpiresAt: string | null;
+  safeEstimatedExpiresAt: string | null;
+  estimateBasis: BankedResetCreditActiveCreditBasis;
+  sourceId?: string | null;
+}
+
 export interface BankedResetCreditAnalysisResult {
   currentAvailableCount: number | null;
   inferredGrantCount: number;
@@ -169,5 +181,7 @@ export interface BankedResetCreditAnalysisResult {
   inferredExpirationCount: number;
   inferredUnknownDecreaseCount: number;
   nextEstimatedExpiresAt: string | null;
+  nextSafeEstimatedExpiresAt: string | null;
+  activeCredits: BankedResetCreditActiveCredit[];
   events: BankedResetCreditEvent[];
 }

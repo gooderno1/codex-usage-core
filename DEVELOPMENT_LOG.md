@@ -1,5 +1,17 @@
 # DEVELOPMENT LOG
 
+## [2026-07-01] v0.1.0-dev.5 feat: 输出 banked reset 逐个明细
+
+- 开发原因：下游需要在总览和 Codex 页面展示每个可用 banked reset credit 的获取时间和预期过期时间；过期提醒需要保守提前，避免用户按最后时刻安排导致错过使用机会。
+- 实现方式：`BankedResetCreditAnalysisResult` 新增 `activeCredits[]` 和 `nextSafeEstimatedExpiresAt`；`BankedResetCreditActiveCredit` 记录 `acquiredAt / firstObservedAt / estimatedExpiresAt / safeEstimatedExpiresAt / estimateBasis`；`analyzeBankedResetCreditObservations` 在首次观测时为已有库存创建 `existing-at-first-observation` 明细，在 `availableCount` 增加时创建 `observed-grant` 明细，在减少时按最早保守过期时间优先移除。
+- 适用范围：适用于下游持续保存脱敏观测历史后展示逐个可用 credit；已观测到新增的 credit 可展示推断获取时间和按 `30d` 有效期估算的过期时间。
+- 触发条件：`availableCount` 首次大于 `0` 时输出既有 credit 明细；后续相邻采样增加时输出推断获得明细；相邻采样减少时沿用 `use / expiration / decrease-unknown` 事件判断并同步扣减 active 明细。
+- 排除条件：Codex app-server 仍不暴露官方逐笔 `grantedAt / expiresAt / usedAt`；首次采样时已经存在的 credit 无法反推真实获取时间和真实过期时间，只能标记为既有库存。
+- 关键字段：`activeCredits[].safeEstimatedExpiresAt` 默认等于 `estimatedExpiresAt - 1d`；`estimateBasis=existing-at-first-observation` 的 `safeEstimatedExpiresAt` 取首次观测时间，下游应展示为“建议尽快使用”。
+- 验证样例：脱敏测试中 `2030-01-02 available=2` 输出 2 条 `observed-grant` active 明细，`acquiredAt=2030-01-02T00:00:00.000Z`、`estimatedExpiresAt=2030-02-01T00:00:00.000Z`、`safeEstimatedExpiresAt=2030-01-31T00:00:00.000Z`；首次观测 `2030-01-10 available=2` 输出 2 条 `existing-at-first-observation` 明细，获取时间为空，保守提醒时间为首次观测时间。
+- 当前结果：核心包可同时输出当前可用次数、推断事件和逐个可用 credit 展示明细；输出仍不包含原始 Codex session 正文、用户输入、模型输出、账号邮箱、token 或原始 app-server 响应。
+- 验证方式：执行 `npm run test`，通过 TypeScript build、原 reset 引擎、banked reset credit 差分分析、逐个 active credit 明细和假 app-server 读取测试；执行 `git diff --check`，仅有 Windows 换行提示。
+
 ## [2026-07-01] v0.1.0-dev.4 feat: 读取 banked reset credit 可用次数
 
 - 开发原因：用户要监控 OpenAI 赠送的 Codex banked rate-limit reset 可用次数、推断获得次数、使用时间和一个月有效期；这类数据不是本地 session `rate_limits` reset 事件，必须从 Codex 产品层数据源读取。
