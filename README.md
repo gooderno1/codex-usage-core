@@ -11,6 +11,8 @@
 - 识别相邻下降 reset。
 - 识别周额度 `24h` 稳定边界回看 reset。
 - 对候选执行 `30min` 延迟、`6h` 确认窗口、`15min` 漂移排除和边界去重。
+- 将稳定确认的 reset 输出为 `rechargeCount / rechargeEvents`，用于展示 Codex 额度充值次数、充值后窗口起点、过期时间和上一轮使用区间。
+- 在 `usageSegments` 中补充 `windowStartedAt / expiresAt / startedByRechargeAt / closedByRechargeAt`，用于追踪每段额度使用时间和被哪次充值开启或截止。
 - 提供 `codex-usage inspect-reset <snapshot.json>` CLI，用于检查快照中的 reset 事件证据。
 
 ## 使用方式
@@ -22,6 +24,14 @@ const result = analyzeQuotaObservations(observations, {
   comparisonScope: "timeline"
 });
 ```
+
+`rechargeEvents` 口径：
+
+- 充值事件等价于已通过稳定确认的额度 reset：`used_percent` 回落、`resets_at` 后移，且满足高水位、边界贴近或稳定边界回看证据之一。
+- `windowStartedAt` 来自充值后 `resetsAt - windowMinutes`。
+- `expiresAt` 来自充值后的 `resetsAt`，表示当前可观测额度窗口的过期时间。
+- `previousUsageStartedAt / previousUsageEndedAt / previousUsedPercent` 记录充值前一轮额度的使用区间和最高已用百分比。
+- 本包只输出结构化百分比和时间，不输出原始 session 正文、用户输入、模型输出或仓库源码。
 
 `comparisonScope`：
 

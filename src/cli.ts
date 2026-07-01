@@ -23,6 +23,7 @@ function collectObservationsFromSnapshot(snapshot: unknown): QuotaCycleObservati
       weeklyPeriods?: Array<{
         quotaEvidence?: {
           resetEvents?: unknown[];
+          rechargeEvents?: unknown[];
         };
       }>;
     };
@@ -31,9 +32,14 @@ function collectObservationsFromSnapshot(snapshot: unknown): QuotaCycleObservati
   const resetEvents = source.ledger?.weeklyPeriods?.flatMap((period) =>
     (period.quotaEvidence?.resetEvents ?? []).map((event) => event)
   );
+  const rechargeEvents = source.ledger?.weeklyPeriods?.flatMap((period) =>
+    (period.quotaEvidence?.rechargeEvents ?? []).map((event) => event)
+  );
 
-  if (resetEvents && resetEvents.length > 0) {
-    console.log(JSON.stringify({ resetEvents }, null, 2));
+  if ((resetEvents && resetEvents.length > 0) || (rechargeEvents && rechargeEvents.length > 0)) {
+    console.log(
+      JSON.stringify({ resetEvents: resetEvents ?? [], rechargeEvents: rechargeEvents ?? [] }, null, 2)
+    );
     return [];
   }
 

@@ -5,7 +5,9 @@ import type {
   QuotaResetComparisonScope,
   QuotaResetConfirmation,
   QuotaResetEvent,
-  QuotaResetEvidence
+  QuotaResetEvidence,
+  QuotaUsageSegment,
+  QuotaRechargeEvent
 } from "./contracts.js";
 
 const DEFAULT_DROP_THRESHOLD_PERCENT = 5;
@@ -53,6 +55,11 @@ function roundTo(value: number, digits = 2) {
 
 function toIsoStringOrNull(value: number) {
   return Number.isFinite(value) ? new Date(value).toISOString() : null;
+}
+
+function normalizeWindowMinutes(value: unknown) {
+  const minutes = Number(value);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
 export function getQuotaObservationBoundaryMs(observation: QuotaCycleObservation) {
@@ -111,7 +118,7 @@ function getQuotaResetObservationEvidence(
       boundaryAlignedEvidence ? "boundary-aligned-drop" : null
     ].filter((item): item is string => Boolean(item)),
     afterBoundaryAt: toIsoStringOrNull(afterBoundaryMs),
-    afterWindowMinutes: Number(current.windowMinutes ?? previous.windowMinutes) || null
+    afterWindowMinutes: normalizeWindowMinutes(current.windowMinutes ?? previous.windowMinutes)
   };
 }
 
@@ -250,10 +257,13 @@ function createQuotaResetCandidate(
     afterUsedPercent: current.usedPercent,
     beforeWindowResetsAt: previous.resetsAt,
     afterWindowResetsAt: current.resetsAt,
+    beforeWindowMinutes: normalizeWindowMinutes(previous.windowMinutes),
+    afterWindowMinutes: normalizeWindowMinutes(current.windowMinutes ?? previous.windowMinutes),
     sourceId: current.sourceId,
     beforeSourceId: previous.sourceId,
     comparisonScope,
-    evidence
+    evidence,
+    boundaryAt: evidence.afterBoundaryAt
   };
 }
 
@@ -365,7 +375,7 @@ function addStabilizedBoundaryResetCandidates(
           stabilizedBoundaryEvidence: true,
           evidenceTypes: ["stabilized-boundary-drop"],
           afterBoundaryAt: toIsoStringOrNull(currentBoundaryMs),
-          afterWindowMinutes: Number(current.windowMinutes ?? bestPrevious.windowMinutes) || null,
+          afterWindowMinutes: normalizeWindowMinutes(current.windowMinutes ?? bestPrevious.windowMinutes),
           lookbackWindowMs: options.lookbackWindowMs,
           lookbackObservedAt: bestPrevious.observedAt
         },
@@ -373,6 +383,157 @@ function addStabilizedBoundaryResetCandidates(
       )
     );
   }
+}
+
+function getQuotaWindowStartedAt(
+  resetsAt: string | null | undefined,
+  windowMinutes: number | null | undefined
+) {
+  const resetMs = resetsAt ? new Date(resetsAt).getTime() : Number.NaN;
+  const minutes = normalizeWindowMinutes(windowMinutes);
+  if (!Number.isFinite(resetMs) || minutes === null) {
+    return null;
+  }
+
+  return new Date(resetMs - minutes * 60 * 1000).toISOString();
+}
+
+function getQuotaObservationExpiresAt(observation: QuotaCycleObservation | null | undefined) {
+  const resetMs = observation?.resetsAt ? new Date(observation.resetsAt).getTime() : Number.NaN;
+  return Number.isFinite(resetMs) ? observation?.resetsAt ?? null : null;
+}
+
+function getQuotaObservationWindowStartedAt(
+  observation: QuotaCycleObservation | null | undefined
+) {
+  return observation ? toIsoStringOrNull(getQuotaObservationBoundaryMs(observation)) : null;
+}
+
+function getRechargeWindowStartedAt(event: QuotaResetEvent) {
+  return (
+    event.boundaryAt ??
+    event.evidence?.afterBoundaryAt ??
+    getQuotaWindowStartedAt(
+      event.afterWindowResetsAt,
+      event.afterWindowMinutes ?? event.evidence?.afterWindowMinutes ?? null
+    )
+  );
+}
+
+function buildQuotaUsageSegments(
+  ordered: QuotaCycleObservation[],
+  resetEvents: QuotaResetEvent[]
+) {
+  const usageSegments: QuotaUsageSegment[] = [];
+
+  if (resetEvents.length > 0) {
+    for (let index = 0; index < resetEvents.length; index += 1) {
+      const event = resetEvents[index];
+      if (!event) {
+        continue;
+      }
+
+      const previousRecharge = resetEvents[index - 1] ?? null;
+      usageSegments.push({
+        usedPercent: event.beforeUsedPercent,
+        maxObservedAt: event.beforeObservedAt,
+        startAt:
+          index === 0
+            ? ordered[0]?.observedAt ?? event.beforeObservedAt
+            : previousRecharge?.at ?? event.beforeObservedAt,
+        endAt: event.at,
+        windowStartedAt:
+          getQuotaWindowStartedAt(event.beforeWindowResetsAt, event.beforeWindowMinutes ?? null) ??
+          (previousRecharge ? getRechargeWindowStartedAt(previousRecharge) : null),
+        expiresAt: event.beforeWindowResetsAt,
+        startedByRechargeAt: index === 0 ? null : previousRecharge?.at ?? null,
+        closedByRechargeAt: event.at
+      });
+    }
+  }
+
+  if (resetEvents.length === 0) {
+    const maxObservation = ordered.reduce<QuotaCycleObservation | null>(
+      (best, item) => (item.usedPercent > (best?.usedPercent ?? -1) ? item : best),
+      null
+    );
+    const latestObservation = ordered.at(-1);
+    if (maxObservation) {
+      usageSegments.push({
+        usedPercent: maxObservation.usedPercent,
+        maxObservedAt: maxObservation.observedAt,
+        startAt: ordered[0]?.observedAt ?? maxObservation.observedAt,
+        endAt: latestObservation?.observedAt ?? maxObservation.observedAt,
+        windowStartedAt: getQuotaObservationWindowStartedAt(latestObservation),
+        expiresAt: getQuotaObservationExpiresAt(latestObservation),
+        startedByRechargeAt: null,
+        closedByRechargeAt: null
+      });
+    }
+  }
+
+  const lastReset = resetEvents.at(-1);
+  if (lastReset) {
+    const lastResetWindowMs = new Date(lastReset.afterWindowResetsAt ?? 0).getTime();
+    const postResetMax = ordered
+      .filter((item) => {
+        const itemResetMs = new Date(item.resetsAt ?? 0).getTime();
+        return (
+          new Date(item.observedAt).getTime() > new Date(lastReset.at).getTime() &&
+          (!Number.isFinite(lastResetWindowMs) ||
+            !Number.isFinite(itemResetMs) ||
+            itemResetMs >= lastResetWindowMs - 60 * 1000)
+        );
+      })
+      .reduce<QuotaCycleObservation | null>(
+        (best, item) => (item.usedPercent > (best?.usedPercent ?? -1) ? item : best),
+        null
+      );
+    if (postResetMax && postResetMax.usedPercent > 0) {
+      usageSegments.push({
+        usedPercent: postResetMax.usedPercent,
+        maxObservedAt: postResetMax.observedAt,
+        startAt: lastReset.at,
+        endAt: ordered.at(-1)?.observedAt ?? postResetMax.observedAt,
+        windowStartedAt: getRechargeWindowStartedAt(lastReset),
+        expiresAt: lastReset.afterWindowResetsAt,
+        startedByRechargeAt: lastReset.at,
+        closedByRechargeAt: null
+      });
+    }
+  }
+
+  return usageSegments;
+}
+
+function buildQuotaRechargeEvents(
+  resetEvents: QuotaResetEvent[],
+  usageSegments: QuotaUsageSegment[]
+) {
+  return resetEvents.map<QuotaRechargeEvent>((event, index) => {
+    const previousUsageSegment =
+      usageSegments.find((segment) => segment.closedByRechargeAt === event.at) ?? null;
+
+    return {
+      rechargeIndex: index + 1,
+      at: event.at,
+      windowStartedAt: getRechargeWindowStartedAt(event),
+      expiresAt: event.afterWindowResetsAt,
+      windowMinutes: event.afterWindowMinutes ?? event.evidence?.afterWindowMinutes ?? null,
+      afterUsedPercent: event.afterUsedPercent,
+      previousWindowStartedAt: previousUsageSegment?.windowStartedAt ?? null,
+      previousExpiresAt: event.beforeWindowResetsAt,
+      previousUsedPercent: event.beforeUsedPercent,
+      previousUsageStartedAt: previousUsageSegment?.startAt ?? event.beforeObservedAt,
+      previousUsageEndedAt: previousUsageSegment?.endAt ?? event.at,
+      previousMaxObservedAt: event.beforeObservedAt,
+      sourceId: event.sourceId,
+      beforeSourceId: event.beforeSourceId,
+      comparisonScope: event.comparisonScope,
+      evidence: event.evidence,
+      confirmation: event.confirmation
+    };
+  });
 }
 
 export function analyzeQuotaObservations(
@@ -449,57 +610,8 @@ export function analyzeQuotaObservations(
     }
   }
 
-  const usageSegments =
-    resetEvents.length > 0
-      ? resetEvents.map((event, index) => ({
-          usedPercent: event.beforeUsedPercent,
-          maxObservedAt: event.beforeObservedAt,
-          startAt: index === 0 ? ordered[0]?.observedAt ?? event.beforeObservedAt : resetEvents[index - 1]?.at ?? event.beforeObservedAt,
-          endAt: event.at
-        }))
-      : [];
-
-  if (resetEvents.length === 0) {
-    const maxObservation = ordered.reduce<QuotaCycleObservation | null>(
-      (best, item) => (item.usedPercent > (best?.usedPercent ?? -1) ? item : best),
-      null
-    );
-    if (maxObservation) {
-      usageSegments.push({
-        usedPercent: maxObservation.usedPercent,
-        maxObservedAt: maxObservation.observedAt,
-        startAt: ordered[0]?.observedAt ?? maxObservation.observedAt,
-        endAt: ordered.at(-1)?.observedAt ?? maxObservation.observedAt
-      });
-    }
-  }
-
-  const lastReset = resetEvents.at(-1);
-  if (lastReset) {
-    const lastResetWindowMs = new Date(lastReset.afterWindowResetsAt ?? 0).getTime();
-    const postResetMax = ordered
-      .filter((item) => {
-        const itemResetMs = new Date(item.resetsAt ?? 0).getTime();
-        return (
-          new Date(item.observedAt).getTime() > new Date(lastReset.at).getTime() &&
-          (!Number.isFinite(lastResetWindowMs) ||
-            !Number.isFinite(itemResetMs) ||
-            itemResetMs >= lastResetWindowMs - 60 * 1000)
-        );
-      })
-      .reduce<QuotaCycleObservation | null>(
-        (best, item) => (item.usedPercent > (best?.usedPercent ?? -1) ? item : best),
-        null
-      );
-    if (postResetMax && postResetMax.usedPercent > 0) {
-      usageSegments.push({
-        usedPercent: postResetMax.usedPercent,
-        maxObservedAt: postResetMax.observedAt,
-        startAt: lastReset.at,
-        endAt: ordered.at(-1)?.observedAt ?? postResetMax.observedAt
-      });
-    }
-  }
+  const usageSegments = buildQuotaUsageSegments(ordered, resetEvents);
+  const rechargeEvents = buildQuotaRechargeEvents(resetEvents, usageSegments);
 
   const cumulativeUsedPercent =
     usageSegments.length > 0
@@ -513,6 +625,8 @@ export function analyzeQuotaObservations(
     cumulativeUsedPercent,
     resetCount: resetEvents.length,
     resetEvents,
+    rechargeCount: rechargeEvents.length,
+    rechargeEvents,
     usageSegments
   };
 }
