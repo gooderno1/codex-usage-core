@@ -1,0 +1,48 @@
+{
+  "name": "@lifeinhand/codex-usage-core",
+  "version": "0.1.0-dev.1",
+  "private": true,
+  "description": "Codex 本地用量、额度周期与重置检测共享核心包",
+  "license": "MIT",
+  "author": "gooderno1",
+  "type": "commonjs",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "codex-usage": "dist/src/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node dist/tests/quota-reset.test.js",
+    "verify": "npm run test",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gooderno1/codex-usage-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gooderno1/codex-usage-core/issues"
+  },
+  "keywords": [
+    "codex",
+    "usage",
+    "quota",
+    "local-first"
+  ]
+}

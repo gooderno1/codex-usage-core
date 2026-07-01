@@ -1,0 +1,4 @@
+node_modules/
+dist/
+local_dev_work/
+*.log
