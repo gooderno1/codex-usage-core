@@ -6,7 +6,6 @@ export type {
   QuotaResetConfirmation,
   QuotaResetEvent,
   QuotaResetEvidence,
-  QuotaRechargeEvent,
   QuotaUsageSegment
 } from "./contracts.js";
 

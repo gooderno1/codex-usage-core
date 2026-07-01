@@ -61,28 +61,8 @@ export interface QuotaUsageSegment {
   endAt: string;
   windowStartedAt?: string | null;
   expiresAt?: string | null;
-  startedByRechargeAt?: string | null;
-  closedByRechargeAt?: string | null;
-}
-
-export interface QuotaRechargeEvent {
-  rechargeIndex: number;
-  at: string;
-  windowStartedAt: string | null;
-  expiresAt: string | null;
-  windowMinutes: number | null;
-  afterUsedPercent: number;
-  previousWindowStartedAt: string | null;
-  previousExpiresAt: string | null;
-  previousUsedPercent: number;
-  previousUsageStartedAt: string;
-  previousUsageEndedAt: string;
-  previousMaxObservedAt: string;
-  sourceId?: string | null;
-  beforeSourceId?: string | null;
-  comparisonScope?: QuotaResetComparisonScope;
-  evidence?: QuotaResetEvidence;
-  confirmation?: QuotaResetConfirmation;
+  startedByResetAt?: string | null;
+  closedByResetAt?: string | null;
 }
 
 export interface QuotaAnalysisOptions {
@@ -101,7 +81,5 @@ export interface QuotaAnalysisResult {
   cumulativeUsedPercent: number | null;
   resetCount: number;
   resetEvents: QuotaResetEvent[];
-  rechargeCount: number;
-  rechargeEvents: QuotaRechargeEvent[];
   usageSegments: QuotaUsageSegment[];
 }
