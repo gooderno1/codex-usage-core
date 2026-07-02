@@ -230,6 +230,128 @@ function rateLimitSnapshot(
   assert.equal(result.activeCredits[1]?.acquiredAt, "2026-06-30T00:00:00.000Z");
 }
 
+{
+  const initialGrantSeeds = [
+    {
+      id: "user-assumed-first-banked-reset-2026-06-14",
+      acquiredAt: "2026-06-14T00:00:00.000Z",
+      sourceId: "user-confirmed-assumption",
+      estimateBasis: "assumed-grant" as const
+    },
+    {
+      id: "codex-companion-observed-banked-reset-2026-07-01",
+      acquiredAt: "2026-07-01T19:58:24.705Z",
+      sourceId: "codex-companion-local-observation",
+      estimateBasis: "observed-grant" as const
+    }
+  ];
+  const observedHistory = [
+    {
+      observedAt: "2026-07-01T17:02:29.327Z",
+      availableCount: 2,
+      rateLimits: rateLimitSnapshot(30, "2026-07-02T00:00:00.000Z")
+    },
+    {
+      observedAt: "2026-07-01T19:58:24.705Z",
+      availableCount: 3,
+      rateLimits: rateLimitSnapshot(35, "2026-07-02T00:00:00.000Z")
+    }
+  ];
+  const result = analyzeBankedResetCreditObservations(observedHistory, { initialGrantSeeds });
+
+  assert.equal(result.currentAvailableCount, 3);
+  assert.equal(result.inferredGrantCount, 1);
+  assert.equal(result.activeCredits.length, 3);
+  assert.equal(result.activeCredits[0]?.estimateBasis, "assumed-grant");
+  assert.equal(result.activeCredits[0]?.acquiredAt, "2026-06-14T00:00:00.000Z");
+  assert.equal(result.activeCredits[0]?.estimatedExpiresAt, "2026-07-14T00:00:00.000Z");
+  assert.equal(result.activeCredits[1]?.estimateBasis, "public-grant");
+  assert.equal(result.activeCredits[1]?.acquiredAt, "2026-06-30T00:00:00.000Z");
+  assert.equal(result.activeCredits[2]?.estimateBasis, "observed-grant");
+  assert.equal(result.activeCredits[2]?.acquiredAt, "2026-07-01T19:58:24.705Z");
+
+  const prunedResult = analyzeBankedResetCreditObservations(
+    [
+      {
+        observedAt: "2026-07-01T21:13:24.380Z",
+        availableCount: 3,
+        rateLimits: rateLimitSnapshot(40, "2026-07-02T02:13:25.000Z")
+      },
+      {
+        observedAt: "2026-07-02T10:14:15.667Z",
+        availableCount: 3,
+        rateLimits: rateLimitSnapshot(22, "2026-07-02T14:29:01.000Z")
+      }
+    ],
+    {
+      initialGrantSeeds,
+      activeCreditBaseline: {
+        observedAt: "2026-07-01T19:58:24.705Z",
+        activeCredits: result.activeCredits
+      }
+    }
+  );
+
+  assert.deepEqual(
+    prunedResult.activeCredits.map((credit) => [credit.estimateBasis, credit.acquiredAt]),
+    result.activeCredits.map((credit) => [credit.estimateBasis, credit.acquiredAt])
+  );
+
+  const migratedBaselineResult = analyzeBankedResetCreditObservations(
+    [
+      {
+        observedAt: "2026-07-02T10:14:15.667Z",
+        availableCount: 3,
+        rateLimits: rateLimitSnapshot(22, "2026-07-02T14:29:01.000Z")
+      }
+    ],
+    {
+      initialGrantSeeds,
+      activeCreditBaseline: {
+        observedAt: "2026-07-02T10:14:15.667Z",
+        activeCredits: [
+          {
+            id: "existing:2026-07-02T10:14:15.667Z:1",
+            acquiredAt: null,
+            firstObservedAt: "2026-07-02T10:14:15.667Z",
+            estimatedExpiresAt: null,
+            safeEstimatedExpiresAt: "2026-07-02T10:14:15.667Z",
+            estimateBasis: "existing-at-first-observation",
+            sourceId: "codex-app-server"
+          },
+          {
+            id: "existing:2026-07-02T10:14:15.667Z:2",
+            acquiredAt: null,
+            firstObservedAt: "2026-07-02T10:14:15.667Z",
+            estimatedExpiresAt: null,
+            safeEstimatedExpiresAt: "2026-07-02T10:14:15.667Z",
+            estimateBasis: "existing-at-first-observation",
+            sourceId: "codex-app-server"
+          },
+          {
+            id: "public-grant:2026-06-30T00:00:00.000Z:codex-usage-incident-compensation-2026-06-30",
+            acquiredAt: "2026-06-30T00:00:00.000Z",
+            firstObservedAt: "2026-07-02T10:14:15.667Z",
+            estimatedExpiresAt: "2026-07-30T00:00:00.000Z",
+            safeEstimatedExpiresAt: "2026-07-29T00:00:00.000Z",
+            estimateBasis: "public-grant",
+            sourceId: "public-codex-usage-incident-compensation"
+          }
+        ]
+      }
+    }
+  );
+
+  assert.deepEqual(
+    migratedBaselineResult.activeCredits.map((credit) => [credit.estimateBasis, credit.acquiredAt]),
+    [
+      ["assumed-grant", "2026-06-14T00:00:00.000Z"],
+      ["public-grant", "2026-06-30T00:00:00.000Z"],
+      ["observed-grant", "2026-07-01T19:58:24.705Z"]
+    ]
+  );
+}
+
 async function runAppServerReadTest() {
   const fakeServer = `
 const bucket = {

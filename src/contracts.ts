@@ -141,16 +141,36 @@ export interface BankedResetCreditAnalysisOptions {
   validityDays?: number;
   expirationSafetyMarginDays?: number;
   publicGrantSeeds?: BankedResetCreditPublicGrantSeed[];
+  initialGrantSeeds?: BankedResetCreditInitialGrantSeed[];
+  activeCreditBaseline?: BankedResetCreditActiveCreditBaseline;
 }
 
 export type BankedResetCreditEventKind = "grant" | "use" | "expiration" | "decrease-unknown";
-export type BankedResetCreditActiveCreditBasis = "observed-grant" | "public-grant" | "existing-at-first-observation";
+export type BankedResetCreditActiveCreditBasis =
+  | "observed-grant"
+  | "public-grant"
+  | "assumed-grant"
+  | "existing-at-first-observation";
+export type BankedResetCreditInitialGrantBasis = "observed-grant" | "assumed-grant";
 
 export interface BankedResetCreditPublicGrantSeed {
   id: string;
   grantedAt: string;
   sourceId?: string | null;
   matchByDefault?: boolean;
+}
+
+export interface BankedResetCreditInitialGrantSeed {
+  id: string;
+  acquiredAt: string;
+  sourceId?: string | null;
+  count?: number;
+  estimateBasis?: BankedResetCreditInitialGrantBasis;
+}
+
+export interface BankedResetCreditActiveCreditBaseline {
+  observedAt: string;
+  activeCredits: BankedResetCreditActiveCredit[];
 }
 
 export interface BankedResetCreditEventEvidence {

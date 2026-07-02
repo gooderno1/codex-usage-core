@@ -4,7 +4,9 @@ import type {
   BankedResetCreditAnalysisResult,
   BankedResetCreditActiveCredit,
   BankedResetCreditActiveCreditBasis,
+  BankedResetCreditActiveCreditBaseline,
   BankedResetCreditEvent,
+  BankedResetCreditInitialGrantSeed,
   BankedResetCreditObservation,
   BankedResetCreditPublicGrantSeed,
   CodexAccountRateLimitsReadOptions,
@@ -441,6 +443,43 @@ function createKnownCredit(
   };
 }
 
+function createInitialSeedCredits(
+  firstObservation: BankedResetCreditObservation,
+  validityMs: number,
+  safetyMarginMs: number,
+  initialGrantSeeds: BankedResetCreditInitialGrantSeed[]
+) {
+  const firstObservedMs = parseIsoMs(firstObservation.observedAt);
+  if (firstObservedMs === null) {
+    return [];
+  }
+
+  return initialGrantSeeds
+    .flatMap((seed) => {
+      const count = Math.max(0, Math.trunc(seed.count ?? 1));
+      return Array.from({ length: count }, (_, index) => ({ seed, index }));
+    })
+    .map(({ seed, index }) => {
+      const acquiredMs = parseIsoMs(seed.acquiredAt);
+      if (acquiredMs === null || acquiredMs > firstObservedMs || acquiredMs + validityMs <= firstObservedMs) {
+        return null;
+      }
+
+      const grantIndex = seed.count && seed.count > 1 ? `${seed.id}:${index + 1}` : seed.id;
+      return createKnownCredit(
+        seed.acquiredAt,
+        firstObservation.observedAt,
+        grantIndex,
+        validityMs,
+        safetyMarginMs,
+        seed.sourceId ?? firstObservation.sourceId,
+        seed.estimateBasis ?? "assumed-grant"
+      );
+    })
+    .filter((credit): credit is EstimatedCredit => credit !== null)
+    .sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
+}
+
 function createPublicSeedCredits(
   firstObservation: BankedResetCreditObservation,
   validityMs: number,
@@ -474,6 +513,28 @@ function createPublicSeedCredits(
     .sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
 }
 
+function createSeedCredits(
+  firstObservation: BankedResetCreditObservation,
+  validityMs: number,
+  safetyMarginMs: number,
+  publicGrantSeeds: BankedResetCreditPublicGrantSeed[],
+  initialGrantSeeds: BankedResetCreditInitialGrantSeed[]
+) {
+  const credits = [
+    ...createInitialSeedCredits(firstObservation, validityMs, safetyMarginMs, initialGrantSeeds),
+    ...createPublicSeedCredits(firstObservation, validityMs, safetyMarginMs, publicGrantSeeds)
+  ];
+  const deduped = new Map<string, EstimatedCredit>();
+  for (const credit of credits) {
+    const key = `${credit.estimateBasis}:${credit.acquiredAt}:${credit.sourceId ?? ""}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, credit);
+    }
+  }
+
+  return [...deduped.values()].sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
+}
+
 function createExistingCredit(
   observedAt: string,
   creditIndex: number,
@@ -497,6 +558,162 @@ function createExistingCredit(
   };
 }
 
+function restoreBaselineCredit(credit: BankedResetCreditActiveCredit): EstimatedCredit | null {
+  const firstObservedMs = parseIsoMs(credit.firstObservedAt);
+  if (firstObservedMs === null) {
+    return null;
+  }
+
+  if (credit.estimateBasis === "existing-at-first-observation") {
+    return {
+      ...credit,
+      acquiredAt: null,
+      estimatedExpiresAt: null,
+      safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt ?? credit.firstObservedAt,
+      estimatedExpiresAtMs: Number.POSITIVE_INFINITY,
+      safeEstimatedExpiresAtMs: parseIsoMs(credit.safeEstimatedExpiresAt) ?? firstObservedMs
+    };
+  }
+
+  const estimatedExpiresAtMs = parseIsoMs(credit.estimatedExpiresAt);
+  if (parseIsoMs(credit.acquiredAt) === null || estimatedExpiresAtMs === null) {
+    return null;
+  }
+
+  return {
+    ...credit,
+    acquiredAt: credit.acquiredAt,
+    estimatedExpiresAt: credit.estimatedExpiresAt,
+    safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt ?? credit.estimatedExpiresAt,
+    estimatedExpiresAtMs,
+    safeEstimatedExpiresAtMs: parseIsoMs(credit.safeEstimatedExpiresAt) ?? estimatedExpiresAtMs
+  };
+}
+
+function publicGrantCreditIsAllowed(credit: EstimatedCredit, publicGrantSeeds: BankedResetCreditPublicGrantSeed[]) {
+  if (credit.estimateBasis !== "public-grant") {
+    return true;
+  }
+
+  const matchingSeed = publicGrantSeeds.find(
+    (seed) => seed.grantedAt === credit.acquiredAt || credit.id.includes(seed.id)
+  );
+  return matchingSeed ? matchingSeed.matchByDefault !== false : true;
+}
+
+function normalizeBaselineCredits(
+  baseline: BankedResetCreditActiveCreditBaseline,
+  targetCount: number,
+  validityMs: number,
+  safetyMarginMs: number,
+  publicGrantSeeds: BankedResetCreditPublicGrantSeed[],
+  initialGrantSeeds: BankedResetCreditInitialGrantSeed[]
+) {
+  const baselineObservation: BankedResetCreditObservation = {
+    observedAt: baseline.observedAt,
+    availableCount: targetCount,
+    sourceId: "active-credit-baseline"
+  };
+  const knownSeedCredits = createSeedCredits(
+    baselineObservation,
+    validityMs,
+    safetyMarginMs,
+    publicGrantSeeds,
+    initialGrantSeeds
+  );
+  const restored = baseline.activeCredits
+    .map(restoreBaselineCredit)
+    .filter((credit): credit is EstimatedCredit => credit !== null)
+    .filter((credit) => publicGrantCreditIsAllowed(credit, publicGrantSeeds));
+  const knownKeys = new Set(
+    restored
+      .filter((credit) => credit.estimateBasis !== "existing-at-first-observation")
+      .map((credit) => `${credit.estimateBasis}:${credit.acquiredAt}:${credit.sourceId ?? ""}`)
+  );
+
+  for (const seedCredit of knownSeedCredits) {
+    const key = `${seedCredit.estimateBasis}:${seedCredit.acquiredAt}:${seedCredit.sourceId ?? ""}`;
+    if (knownKeys.has(key)) {
+      continue;
+    }
+
+    const existingIndex = restored.findIndex((credit) => credit.estimateBasis === "existing-at-first-observation");
+    if (existingIndex >= 0) {
+      restored.splice(existingIndex, 1, seedCredit);
+      knownKeys.add(key);
+    } else if (restored.length < targetCount) {
+      restored.push(seedCredit);
+      knownKeys.add(key);
+    }
+  }
+
+  while (restored.length < targetCount) {
+    const credit = createExistingCredit(baseline.observedAt, restored.length + 1, "active-credit-baseline");
+    if (!credit) {
+      break;
+    }
+    restored.push(credit);
+  }
+
+  return restored.slice(0, targetCount);
+}
+
+function createBaselineState(
+  baseline: BankedResetCreditActiveCreditBaseline | undefined,
+  ordered: BankedResetCreditObservation[],
+  validityMs: number,
+  safetyMarginMs: number,
+  publicGrantSeeds: BankedResetCreditPublicGrantSeed[],
+  initialGrantSeeds: BankedResetCreditInitialGrantSeed[]
+): { timeline: BankedResetCreditObservation[]; startIndex: number; activeCredits: EstimatedCredit[] } | null {
+  const baselineMs = parseIsoMs(baseline?.observedAt);
+  if (!baseline || ordered.length === 0 || baselineMs === null) {
+    return null;
+  }
+
+  const exactIndex = ordered.findIndex((observation) => observation.observedAt === baseline.observedAt);
+  const targetCount =
+    exactIndex >= 0 ? ordered[exactIndex]?.availableCount ?? baseline.activeCredits.length : baseline.activeCredits.length;
+  const activeCredits = normalizeBaselineCredits(
+    baseline,
+    targetCount,
+    validityMs,
+    safetyMarginMs,
+    publicGrantSeeds,
+    initialGrantSeeds
+  );
+
+  if (activeCredits.length !== targetCount) {
+    return null;
+  }
+
+  if (exactIndex >= 0) {
+    return {
+      timeline: ordered,
+      startIndex: exactIndex + 1,
+      activeCredits
+    };
+  }
+
+  const timeline = [
+    {
+      observedAt: baseline.observedAt,
+      availableCount: activeCredits.length,
+      sourceId: "active-credit-baseline"
+    },
+    ...ordered.filter((observation) => {
+      const observedMs = parseIsoMs(observation.observedAt);
+      return observedMs !== null && observedMs > baselineMs;
+    })
+  ];
+
+  return {
+    timeline,
+    startIndex: 1,
+    activeCredits
+  };
+}
+
 function serializeActiveCredit(credit: EstimatedCredit): BankedResetCreditActiveCredit {
   return {
     id: credit.id,
@@ -517,6 +734,7 @@ export function analyzeBankedResetCreditObservations(
   const safetyMarginMs =
     Math.max(0, options.expirationSafetyMarginDays ?? DEFAULT_EXPIRATION_SAFETY_MARGIN_DAYS) * MS_PER_DAY;
   const publicGrantSeeds = options.publicGrantSeeds ?? DEFAULT_BANKED_RESET_CREDIT_PUBLIC_GRANT_SEEDS;
+  const initialGrantSeeds = options.initialGrantSeeds ?? [];
   const ordered = observations
     .filter((observation) => Number.isFinite(new Date(observation.observedAt).getTime()))
     .slice()
@@ -524,32 +742,47 @@ export function analyzeBankedResetCreditObservations(
 
   const events: BankedResetCreditEvent[] = [];
   const estimatedCredits: EstimatedCredit[] = [];
+  const baselineState = createBaselineState(
+    options.activeCreditBaseline,
+    ordered,
+    validityMs,
+    safetyMarginMs,
+    publicGrantSeeds,
+    initialGrantSeeds
+  );
+  const timeline = baselineState?.timeline ?? ordered;
+  const startIndex = Math.max(1, baselineState?.startIndex ?? 1);
 
-  const firstObservation = ordered[0];
-  if (firstObservation) {
-    const publicSeedCredits = createPublicSeedCredits(
-      firstObservation,
-      validityMs,
-      safetyMarginMs,
-      publicGrantSeeds
-    ).slice(0, firstObservation.availableCount);
-    estimatedCredits.push(...publicSeedCredits);
+  if (baselineState) {
+    estimatedCredits.push(...baselineState.activeCredits);
+  } else {
+    const firstObservation = timeline[0];
+    if (firstObservation) {
+      const seedCredits = createSeedCredits(
+        firstObservation,
+        validityMs,
+        safetyMarginMs,
+        publicGrantSeeds,
+        initialGrantSeeds
+      ).slice(0, firstObservation.availableCount);
+      estimatedCredits.push(...seedCredits);
 
-    for (let index = publicSeedCredits.length; index < firstObservation.availableCount; index += 1) {
-      const credit = createExistingCredit(
-        firstObservation.observedAt,
-        index - publicSeedCredits.length + 1,
-        firstObservation.sourceId
-      );
-      if (credit) {
-        estimatedCredits.push(credit);
+      for (let index = seedCredits.length; index < firstObservation.availableCount; index += 1) {
+        const credit = createExistingCredit(
+          firstObservation.observedAt,
+          index - seedCredits.length + 1,
+          firstObservation.sourceId
+        );
+        if (credit) {
+          estimatedCredits.push(credit);
+        }
       }
     }
   }
 
-  for (let index = 1; index < ordered.length; index += 1) {
-    const previous = ordered[index - 1];
-    const current = ordered[index];
+  for (let index = startIndex; index < timeline.length; index += 1) {
+    const previous = timeline[index - 1];
+    const current = timeline[index];
     if (!previous || !current) {
       continue;
     }

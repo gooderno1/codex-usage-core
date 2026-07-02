@@ -1,5 +1,17 @@
 # DEVELOPMENT LOG
 
+## [2026-07-02] v0.1.0-dev.8 feat: 支持初始赠送重置假定和 active baseline
+
+- 开发原因：用户确认本项目此前对第三次 banked reset credit 的观测是准确的；首次观测前已有的第一条 credit 无法从接口反推真实获取时间，本轮统一假定为 `2026-06-14`；后续增加和使用仍应优先沿用本地 `availableCount` 观测，而不能因为下游滚动裁剪历史后退回未知。
+- 实现方式：将版本从 `v0.1.0-dev.7` 提升到 `v0.1.0-dev.8`；`BankedResetCreditActiveCreditBasis` 新增 `assumed-grant`；`BankedResetCreditAnalysisOptions` 新增 `initialGrantSeeds` 和 `activeCreditBaseline`；首次库存归因时会合并调用方初始 seed、默认公开 seed 和剩余未知项；传入上一轮 `activeCreditBaseline` 时会从 baseline 后的观测继续分析，并按当前 seed 配置过滤掉不再默认匹配的 `2026-06-11` public grant。
+- 适用范围：仅适用于 Codex app-server 只读 `rateLimitResetCredits.availableCount` 已返回可用次数但不返回逐笔 `grantedAt / expiresAt / usedAt` 的场景；`initialGrantSeeds` 是调用方显式传入的本地或用户确认口径，核心包默认不会自行假定 `2026-06-14`。
+- 触发条件：初始 seed 仅在 `acquiredAt <= firstObservedAt < acquiredAt + validityDays` 时参与首次库存匹配；`activeCreditBaseline` 仅在下游传入 `observedAt + activeCredits[]` 且当前观测可继续衔接时作为分析起点。
+- 排除条件：`2026-06-11` launch seed 仍默认 `matchByDefault=false`；核心包不从单次 `availableCount=3` 自行臆造第三次获取时间；若没有调用方初始 seed、baseline 或相邻观测差分，剩余库存仍保持 `existing-at-first-observation`。
+- 关键字段：`initialGrantSeeds[].estimateBasis=assumed-grant` 表示用户确认的假定时间；`initialGrantSeeds[].estimateBasis=observed-grant` 表示下游曾经实际观测到的新增时间；`activeCreditBaseline.activeCredits[]` 用于跨滚动历史延续已识别明细。
+- 验证样例：脱敏测试中 `2026-07-01T17:02:29.327Z available=2 -> 2026-07-01T19:58:24.705Z available=3` 输出 3 条 active 明细：`2026-06-14 assumed-grant`、`2026-06-30 public-grant`、`2026-07-01T19:58:24.705Z observed-grant`；当历史裁剪为 `2026-07-01T21:13:24.380Z available=3` 后，传入上一轮 baseline 仍保留同样 3 条明细。
+- 当前结果：核心包可同时表达“第一次按 6 月 14 日假定”和“后续增加/使用按实际观测延续”的口径；下游可在升级依赖后移除本地 `6.11` 强制匹配，并传入本项目确认过的初始 seed 与 baseline。
+- 验证方式：执行 `npm run build` 和 `npm run test`，均通过。
+
 ## [2026-07-02] v0.1.0-dev.7 fix: 避免默认匹配已用 launch reset
 
 - 开发原因：用户确认当前 `rateLimitResetCredits.availableCount=3` 是正确的，但 `2026-06-11` banking 上线赠送的 launch free reset 很可能已经在开始监控前被使用；核心包不能继续把这次 seed 默认归因到当前库存。
