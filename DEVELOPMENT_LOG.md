@@ -1,5 +1,16 @@
 # DEVELOPMENT LOG
 
+## [2026-07-02] v0.1.0-dev.7 fix: 避免默认匹配已用 launch reset
+
+- 开发原因：用户确认当前 `rateLimitResetCredits.availableCount=3` 是正确的，但 `2026-06-11` banking 上线赠送的 launch free reset 很可能已经在开始监控前被使用；核心包不能继续把这次 seed 默认归因到当前库存。
+- 实现方式：将版本从 `v0.1.0-dev.6` 提升到 `v0.1.0-dev.7`；`BankedResetCreditPublicGrantSeed` 新增 `matchByDefault`；默认公开 seed 仍保留 `2026-06-11` launch free reset，但设置 `matchByDefault=false`；`createPublicSeedCredits()` 只自动匹配 `matchByDefault !== false` 的 seed；文档说明调用方可显式把某个 seed 打开或传入自定义 seed 列表。
+- 适用范围：仅影响首次观测时已有的 banked reset credit 归因；后续 `availableCount` 增加仍按本地观测时间输出 `observed-grant`，减少仍按 reset 证据判断 `use / expiration / decrease-unknown`。
+- 触发条件：首次观测 `availableCount > 0` 时，只把仍在有效期内且允许默认匹配的公开 seed 归因为 `public-grant`；未匹配的数量继续标记为 `existing-at-first-observation`。
+- 排除条件：`2026-06-11` launch seed 默认不参与匹配，除非调用方明确传入 `matchByDefault=true`；核心包不从 `availableCount` 反推用户是否曾经手动使用过某个具体 seed。
+- 关键字段：`publicGrantSeeds[].matchByDefault=false` 表示“公开事件存在，但不应自动当作当前仍可用”；`activeCredits[].estimateBasis=existing-at-first-observation` 表示仍无法逐笔确认。
+- 验证样例：脱敏测试中 `2026-07-02 available=2` 默认输出 `2026-06-30 -> 2026-07-30` 的 `public-grant` 和 1 条 `existing-at-first-observation`；同一测试显式把 `2026-06-11` seed 设置为 `matchByDefault=true` 时，才输出 `2026-06-11` 与 `2026-06-30` 两条 `public-grant`。
+- 验证方式：执行 `npm run test`，覆盖 TypeScript build、原 reset 引擎、banked reset credit 差分分析、`2026-06-11` seed 默认不匹配、显式启用后匹配和假 app-server 读取测试；执行 `git diff --check`，仅有 Windows 换行提示。
+
 ## [2026-07-02] v0.1.0-dev.6 feat: 用公开 seed 推断赠送重置过期时间
 
 - 开发原因：用户指出 banked reset credit 已有官方公开 `30` 天有效期口径，且当前本机可用的 `2` 次可以分别对应公开发放事件；首次观测已有库存不应全部显示为无法推断。

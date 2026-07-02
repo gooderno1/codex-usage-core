@@ -53,10 +53,10 @@ banked reset credit 口径：
 - 本包不会调用 `account/rateLimitResetCredit/consume`，不会消耗用户的 banked reset credit。
 - 当前 Codex app-server schema 只暴露 `availableCount`，没有逐笔 `grantedAt / expiresAt / usedAt` 明细。
 - OpenAI 公开资料说明 banked Codex rate-limit reset 授予后 `30` 天可用；本包默认按 `30d` 估算过期时间，并允许通过 `validityDays` 覆盖。
-- `analyzeBankedResetCreditObservations` 会优先用仍在有效期内的公开发放事件为首次已有库存补种子：
-  - `2026-06-11T00:00:00.000Z`：Codex app `26.609` rate-limit reset banking 上线时面向 Plus / Pro 用户的一次 free reset。
+- `analyzeBankedResetCreditObservations` 会用仍在有效期内且允许默认匹配的公开发放事件为首次已有库存补种子：
+  - `2026-06-11T00:00:00.000Z`：Codex app `26.609` rate-limit reset banking 上线时面向 Plus / Pro 用户的一次 free reset；这次 reset 可能已在开始监控前被用户手动使用，因此默认 `matchByDefault=false`，不自动归因到当前库存。
   - `2026-06-30T00:00:00.000Z`：Codex 异常消耗修复后的公开补偿 reset，时间按公开消息保守提前到当天 `00:00 UTC`。
-  - 这些种子只用于 `activeCredits[]` 的 `public-grant` 估算，不表示接口返回了私有账号的逐笔明细；调用方可传入 `publicGrantSeeds: []` 关闭默认种子。
+  - 这些种子只用于 `activeCredits[]` 的 `public-grant` 估算，不表示接口返回了私有账号的逐笔明细；调用方可传入 `publicGrantSeeds: []` 关闭默认种子，或显式把某个 seed 的 `matchByDefault` 设为 `true`。
 - `analyzeBankedResetCreditObservations` 同时基于相邻采样差值推断：
   - `grant`：`availableCount` 增加，`estimatedExpiresAt = observedAt + 30d`，该过期时间是按官方有效期规则估算，不是接口原始字段。
   - `use`：`availableCount` 减少，且同一采样区间内 5H 或周额度窗口出现 `usedPercent` 回落、`resetsAt` 后移。

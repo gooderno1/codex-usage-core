@@ -187,16 +187,47 @@ function rateLimitSnapshot(
 
   assert.equal(result.currentAvailableCount, 2);
   assert.equal(result.activeCredits.length, 2);
-  assert.equal(result.activeCredits[0]?.estimateBasis, "public-grant");
-  assert.equal(result.activeCredits[0]?.acquiredAt, "2026-06-11T00:00:00.000Z");
-  assert.equal(result.activeCredits[0]?.estimatedExpiresAt, "2026-07-11T00:00:00.000Z");
-  assert.equal(result.activeCredits[0]?.safeEstimatedExpiresAt, "2026-07-10T00:00:00.000Z");
+  assert.equal(result.activeCredits[0]?.estimateBasis, "existing-at-first-observation");
+  assert.equal(result.activeCredits[0]?.acquiredAt, null);
+  assert.equal(result.activeCredits[0]?.estimatedExpiresAt, null);
+  assert.equal(result.activeCredits[0]?.safeEstimatedExpiresAt, "2026-07-02T00:00:00.000Z");
   assert.equal(result.activeCredits[1]?.estimateBasis, "public-grant");
   assert.equal(result.activeCredits[1]?.acquiredAt, "2026-06-30T00:00:00.000Z");
   assert.equal(result.activeCredits[1]?.estimatedExpiresAt, "2026-07-30T00:00:00.000Z");
   assert.equal(result.activeCredits[1]?.safeEstimatedExpiresAt, "2026-07-29T00:00:00.000Z");
-  assert.equal(result.nextEstimatedExpiresAt, "2026-07-11T00:00:00.000Z");
-  assert.equal(result.nextSafeEstimatedExpiresAt, "2026-07-10T00:00:00.000Z");
+  assert.equal(result.nextEstimatedExpiresAt, "2026-07-30T00:00:00.000Z");
+  assert.equal(result.nextSafeEstimatedExpiresAt, "2026-07-29T00:00:00.000Z");
+}
+
+{
+  const result = analyzeBankedResetCreditObservations(
+    [
+      {
+        observedAt: "2026-07-02T00:00:00.000Z",
+        availableCount: 2,
+        rateLimits: rateLimitSnapshot(30, "2026-07-05T00:00:00.000Z")
+      }
+    ],
+    {
+      publicGrantSeeds: [
+        {
+          id: "codex-banking-launch-free-reset-2026-06-11",
+          grantedAt: "2026-06-11T00:00:00.000Z",
+          matchByDefault: true
+        },
+        {
+          id: "codex-usage-incident-compensation-2026-06-30",
+          grantedAt: "2026-06-30T00:00:00.000Z"
+        }
+      ]
+    }
+  );
+
+  assert.equal(result.activeCredits.length, 2);
+  assert.equal(result.activeCredits[0]?.estimateBasis, "public-grant");
+  assert.equal(result.activeCredits[0]?.acquiredAt, "2026-06-11T00:00:00.000Z");
+  assert.equal(result.activeCredits[1]?.estimateBasis, "public-grant");
+  assert.equal(result.activeCredits[1]?.acquiredAt, "2026-06-30T00:00:00.000Z");
 }
 
 async function runAppServerReadTest() {

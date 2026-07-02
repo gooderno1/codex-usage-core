@@ -24,7 +24,8 @@ export const DEFAULT_BANKED_RESET_CREDIT_PUBLIC_GRANT_SEEDS: BankedResetCreditPu
   {
     id: "codex-banking-launch-free-reset-2026-06-11",
     grantedAt: "2026-06-11T00:00:00.000Z",
-    sourceId: "openai-codex-app-26.609-launch"
+    sourceId: "openai-codex-app-26.609-launch",
+    matchByDefault: false
   },
   {
     id: "codex-usage-incident-compensation-2026-06-30",
@@ -452,6 +453,7 @@ function createPublicSeedCredits(
   }
 
   return publicGrantSeeds
+    .filter((seed) => seed.matchByDefault !== false)
     .map((seed) => {
       const grantedMs = parseIsoMs(seed.grantedAt);
       if (grantedMs === null || grantedMs > firstObservedMs || grantedMs + validityMs <= firstObservedMs) {

@@ -150,6 +150,7 @@ export interface BankedResetCreditPublicGrantSeed {
   id: string;
   grantedAt: string;
   sourceId?: string | null;
+  matchByDefault?: boolean;
 }
 
 export interface BankedResetCreditEventEvidence {
