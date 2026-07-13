@@ -630,6 +630,7 @@ function restoreBaselineCredit(credit: BankedResetCreditActiveCredit): Estimated
     ...credit,
     acquiredAt: credit.acquiredAt,
     expiresAt: credit.expiresAt ?? credit.estimatedExpiresAt,
+    expiryBasis: credit.expiryBasis ?? "estimated",
     estimatedExpiresAt: credit.estimatedExpiresAt,
     safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt ?? credit.estimatedExpiresAt,
     estimatedExpiresAtMs,

@@ -1,5 +1,12 @@
 # DEVELOPMENT LOG
 
+## [2026-07-13] v0.1.0-dev.10 fix: 兼容旧版到期估算 baseline
+
+- 开发原因：两个下游升级时会把 `v0.1.0-dev.8` 生成的 `activeCredits[]` 缓存作为 baseline 传回，新字段 `expiryBasis` 在旧缓存中不存在。
+- 实现方式：恢复已知旧 credit 时，统一以 `expiresAt ?? estimatedExpiresAt` 迁移到新字段，并把缺失的 `expiryBasis` 设为 `estimated`；首次未知库存仍设为 `unknown`。
+- 当前结果：升级后的首次刷新无需清空本地历史即可平滑迁移到官方/估算统一到期模型。
+- 验证方式：执行 `npm run test` 与 `git diff --check`。
+
 ## [2026-07-13] v0.1.0-dev.9 feat: 接入官方赠送重置到期明细
 
 - 开发原因：OpenAI Codex 官方 app-server 主线已在 `account/rateLimits/read` 的 `rateLimitResetCredits.credits[]` 暴露逐笔赠送重置的获取和到期信息，旧版仅基于 `availableCount`、公开事件和本地采样估算到期时间的口径需要升级。
