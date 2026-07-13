@@ -109,6 +109,22 @@ export interface CodexRateLimitSnapshot {
 
 export interface CodexRateLimitResetCreditsSummary {
   availableCount: number;
+  credits: CodexRateLimitResetCredit[] | null;
+}
+
+export type CodexRateLimitResetType = "codexRateLimits" | "unknown";
+export type CodexRateLimitResetCreditStatus = "available" | "redeeming" | "redeemed" | "unknown";
+
+export interface CodexRateLimitResetCredit {
+  id: string;
+  resetType: CodexRateLimitResetType;
+  status: CodexRateLimitResetCreditStatus;
+  grantedAt: string;
+  grantedAtUnixSeconds: number;
+  expiresAt: string | null;
+  expiresAtUnixSeconds: number | null;
+  title: string | null;
+  description: string | null;
 }
 
 export interface CodexAccountRateLimitsSnapshot {
@@ -132,6 +148,7 @@ export interface CodexAccountRateLimitsReadOptions {
 export interface BankedResetCreditObservation {
   observedAt: string;
   availableCount: number;
+  officialCredits?: CodexRateLimitResetCredit[] | null;
   rateLimits?: CodexRateLimitSnapshot | null;
   rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
   sourceId?: string | null;
@@ -147,6 +164,7 @@ export interface BankedResetCreditAnalysisOptions {
 
 export type BankedResetCreditEventKind = "grant" | "use" | "expiration" | "decrease-unknown";
 export type BankedResetCreditActiveCreditBasis =
+  | "official-detail"
   | "observed-grant"
   | "public-grant"
   | "assumed-grant"
@@ -196,9 +214,15 @@ export interface BankedResetCreditActiveCredit {
   id: string;
   acquiredAt: string | null;
   firstObservedAt: string;
+  expiresAt: string | null;
+  expiryBasis: "official" | "estimated" | "unknown";
   estimatedExpiresAt: string | null;
   safeEstimatedExpiresAt: string | null;
   estimateBasis: BankedResetCreditActiveCreditBasis;
+  resetType?: CodexRateLimitResetType | null;
+  status?: CodexRateLimitResetCreditStatus | null;
+  title?: string | null;
+  description?: string | null;
   sourceId?: string | null;
 }
 
@@ -210,6 +234,10 @@ export interface BankedResetCreditAnalysisResult {
   inferredUnknownDecreaseCount: number;
   nextEstimatedExpiresAt: string | null;
   nextSafeEstimatedExpiresAt: string | null;
+  nextExpiresAt: string | null;
+  nextExpiryBasis: "official" | "estimated" | null;
+  officialDetailCount: number;
+  officialDetailsComplete: boolean;
   activeCredits: BankedResetCreditActiveCredit[];
   events: BankedResetCreditEvent[];
 }

@@ -13,7 +13,7 @@
 - 对候选执行 `30min` 延迟、`6h` 确认窗口、`15min` 漂移排除和边界去重。
 - 在 `QuotaResetEvent` 中补充 `beforeWindowMinutes / afterWindowMinutes / boundaryAt`，用于追踪 reset 后窗口起点和过期时间。
 - 在 `usageSegments` 中补充 `windowStartedAt / expiresAt / startedByResetAt / closedByResetAt`，用于追踪每段额度使用时间和被哪次 reset 开启或截止。
-- 通过 Codex 本地 app-server 只读接口 `account/rateLimits/read` 读取 `rateLimitResetCredits.availableCount`，用于监控 OpenAI 赠送的 banked reset credit 当前可用次数。
+- 通过 Codex 本地 app-server 只读接口 `account/rateLimits/read` 读取 `rateLimitResetCredits.availableCount / credits[]`，用于监控 OpenAI 赠送的 banked reset credit 当前可用次数与官方逐笔到期信息。
 - 提供 `analyzeBankedResetCreditObservations`，基于公开发放事件、调用方确认的初始 seed、上一轮 active credit baseline 和多次 `availableCount` 采样推断获得次数、使用次数、过期候选、未知减少和当前逐个可用 credit 明细。
 - 提供 `codex-usage inspect-reset <snapshot.json>` CLI，用于检查快照中的 reset 事件证据。
 - 提供 `codex-usage inspect-banked-reset` CLI，用于只读检查当前 Codex app-server 返回的 banked reset credit 可用次数。
@@ -61,7 +61,9 @@ banked reset credit 口径：
 
 - `rateLimitResetCredits.availableCount` 来自 Codex 本地 app-server 只读方法 `account/rateLimits/read`，表示当前可用的 banked Codex rate-limit reset 数量。
 - 本包不会调用 `account/rateLimitResetCredit/consume`，不会消耗用户的 banked reset credit。
-- 当前 Codex app-server schema 只暴露 `availableCount`，没有逐笔 `grantedAt / expiresAt / usedAt` 明细。
+- 新版 Codex app-server 会在 `rateLimitResetCredits.credits[]` 中返回逐笔 `id / resetType / status / grantedAt / expiresAt / title / description`；本包将 Unix 秒转换为 ISO 时间，并在 `activeCredits[]` 中以 `estimateBasis=official-detail`、`expiryBasis=official` 输出。
+- `credits=null` 表示当前 Codex 或后端只提供总数；空数组表示已获取明细但当前没有可用明细。官方说明明细可能被截断，因此 `availableCount` 始终是权威总数，`officialDetailsComplete` 只有在明细数与总数一致时才为 `true`。
+- 当官方逐笔明细不可用或不完整时，未覆盖的库存继续使用本地观测、公开 seed 和调用方 seed 估算；`nextExpiresAt / nextExpiryBasis` 统一给出最近已知到期时间及其官方或估算来源。
 - OpenAI 公开资料说明 banked Codex rate-limit reset 授予后 `30` 天可用；本包默认按 `30d` 估算过期时间，并允许通过 `validityDays` 覆盖。
 - `analyzeBankedResetCreditObservations` 会用仍在有效期内且允许默认匹配的公开发放事件为首次已有库存补种子：
   - `2026-06-11T00:00:00.000Z`：Codex app `26.609` rate-limit reset banking 上线时面向 Plus / Pro 用户的一次 free reset；这次 reset 可能已在开始监控前被用户手动使用，因此默认 `matchByDefault=false`，不自动归因到当前库存。
@@ -77,7 +79,7 @@ banked reset credit 口径：
   - `use`：`availableCount` 减少，且同一采样区间内 5H 或周额度窗口出现 `usedPercent` 回落、`resetsAt` 后移。
   - `expiration`：`availableCount` 减少，未观察到额度窗口 reset，且存在已推断 grant 到达估算过期时间。
   - `decrease-unknown`：`availableCount` 减少，但证据不足以区分使用或过期。
-- `activeCredits[]` 表示当前仍可用的逐个 banked reset credit：
+- `activeCredits[]` 表示当前仍可用的逐个 banked reset credit；官方明细优先，缺失部分才回退到估算：
   - `acquiredAt`：采样中观测到 `availableCount` 增加时取当前采样时间；命中公开 seed 时取公开发放时间；命中调用方初始 seed 时取调用方传入时间；其他首次已有库存仍为空。
   - `estimatedExpiresAt`：按 `acquiredAt + 30d` 估算。
   - `safeEstimatedExpiresAt`：默认按 `estimatedExpiresAt - 1d` 输出，供下游优先展示，避免用户卡着最后时刻错过使用机会。

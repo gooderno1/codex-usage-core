@@ -1,5 +1,16 @@
 # DEVELOPMENT LOG
 
+## [2026-07-13] v0.1.0-dev.9 feat: 接入官方赠送重置到期明细
+
+- 开发原因：OpenAI Codex 官方 app-server 主线已在 `account/rateLimits/read` 的 `rateLimitResetCredits.credits[]` 暴露逐笔赠送重置的获取和到期信息，旧版仅基于 `availableCount`、公开事件和本地采样估算到期时间的口径需要升级。
+- 实现方式：新增 `CodexRateLimitResetCredit` 及相关状态/类型，解析 `id / resetType / status / grantedAt / expiresAt / title / description`，将 Unix 秒同步规范化为 ISO；`BankedResetCreditObservation` 保存 `officialCredits`；分析结果新增 `expiresAt / expiryBasis`、`nextExpiresAt / nextExpiryBasis`、`officialDetailCount / officialDetailsComplete`，并以 `official-detail` 优先覆盖对应库存，未被官方明细覆盖的数量继续沿用旧估算回退。
+- 适用范围：Codex app-server 返回 `rateLimitResetCredits` 的环境。`credits=null` 代表仅总数可用；`credits=[]` 代表明细已获取但没有可用条目；明细数可能小于 `availableCount`，因此总数仍以 `availableCount` 为准，不能用数组长度覆盖。
+- 触发条件：逐笔记录必须包含字符串 `id` 和可解析的 Unix 秒 `grantedAt`；`expiresAt=null` 表示官方声明该条不设到期时间。未知 `resetType / status` 规范化为 `unknown`，非法逐笔记录被忽略且不会降低权威总数。
+- 排除条件：本包仍不会调用 `account/rateLimitResetCredit/consume`；不保存原始 app-server 响应、用户输入、模型输出、账号凭据或私有源码。官方明细不完整时，不把已返回的部分误判为完整库存。
+- 验证样例：脱敏 fixture 使用 `availableCount=2`、仅返回 1 条明细，明细 `grantedAt=1781654400`、`expiresAt=1784246400`；输出为 `2026-06-17T00:00:00.000Z -> 2026-07-17T00:00:00.000Z`、`expiryBasis=official`、`officialDetailCount=1`、`officialDetailsComplete=false`，同时保留第 2 条估算/未知库存。
+- 当前结果：新版 Codex 可直接展示官方到期时间，旧版 Codex 仍兼容现有估算逻辑；对外类型不包含原始会话正文。
+- 验证方式：执行 `npm run build` 和 `npm run test`，覆盖旧 schema、官方完整字段规范化、部分明细与估算回退；执行 `git diff --check`。
+
 ## [2026-07-02] v0.1.0-dev.8 feat: 支持初始赠送重置假定和 active baseline
 
 - 开发原因：用户确认本项目此前对第三次 banked reset credit 的观测是准确的；首次观测前已有的第一条 credit 无法从接口反推真实获取时间，本轮统一假定为 `2026-06-14`；后续增加和使用仍应优先沿用本地 `availableCount` 观测，而不能因为下游滚动裁剪历史后退回未知。

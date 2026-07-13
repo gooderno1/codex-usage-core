@@ -12,6 +12,8 @@ import type {
   CodexAccountRateLimitsReadOptions,
   CodexAccountRateLimitsSnapshot,
   CodexCreditsSnapshot,
+  CodexRateLimitResetCredit,
+  CodexRateLimitResetCreditStatus,
   CodexRateLimitResetCreditsSummary,
   CodexRateLimitSnapshot,
   CodexRateLimitWindowSnapshot
@@ -117,7 +119,44 @@ function normalizeResetCredits(raw: unknown): CodexRateLimitResetCreditsSummary 
   }
 
   const availableCount = numberOrNull(raw.availableCount);
-  return availableCount === null ? null : { availableCount };
+  if (availableCount === null) {
+    return null;
+  }
+
+  const credits = raw.credits === null || raw.credits === undefined
+    ? null
+    : Array.isArray(raw.credits)
+      ? raw.credits.map(normalizeResetCredit).filter((credit): credit is CodexRateLimitResetCredit => credit !== null)
+      : null;
+  return { availableCount, credits };
+}
+
+function normalizeResetCreditStatus(value: unknown): CodexRateLimitResetCreditStatus {
+  return value === "available" || value === "redeeming" || value === "redeemed" ? value : "unknown";
+}
+
+function normalizeResetCredit(raw: unknown): CodexRateLimitResetCredit | null {
+  if (!isRecord(raw) || typeof raw.id !== "string") {
+    return null;
+  }
+
+  const grantedAt = normalizeUnixSeconds(raw.grantedAt);
+  if (grantedAt.iso === null || grantedAt.seconds === null) {
+    return null;
+  }
+  const expiresAt = raw.expiresAt === null ? { iso: null, seconds: null } : normalizeUnixSeconds(raw.expiresAt);
+
+  return {
+    id: raw.id,
+    resetType: raw.resetType === "codexRateLimits" ? "codexRateLimits" : "unknown",
+    status: normalizeResetCreditStatus(raw.status),
+    grantedAt: grantedAt.iso,
+    grantedAtUnixSeconds: grantedAt.seconds,
+    expiresAt: expiresAt.iso,
+    expiresAtUnixSeconds: expiresAt.seconds,
+    title: stringOrNull(raw.title),
+    description: stringOrNull(raw.description)
+  };
 }
 
 function normalizeRateLimitsByLimitId(raw: unknown): Record<string, CodexRateLimitSnapshot> | null {
@@ -153,6 +192,7 @@ export function createBankedResetCreditObservationFromSnapshot(
   return {
     observedAt: snapshot.observedAt,
     availableCount: snapshot.rateLimitResetCredits?.availableCount ?? 0,
+    officialCredits: snapshot.rateLimitResetCredits?.credits ?? null,
     rateLimits: snapshot.rateLimits,
     rateLimitsByLimitId: snapshot.rateLimitsByLimitId,
     sourceId
@@ -434,6 +474,8 @@ function createKnownCredit(
     id: `${estimateBasis}:${acquiredAt}:${grantIndex}`,
     acquiredAt,
     firstObservedAt,
+    expiresAt: new Date(estimatedExpiresAtMs).toISOString(),
+    expiryBasis: "estimated",
     estimatedExpiresAt: new Date(estimatedExpiresAtMs).toISOString(),
     safeEstimatedExpiresAt: new Date(safeEstimatedExpiresAtMs).toISOString(),
     estimatedExpiresAtMs,
@@ -549,6 +591,8 @@ function createExistingCredit(
     id: `existing:${observedAt}:${creditIndex}`,
     acquiredAt: null,
     firstObservedAt: observedAt,
+    expiresAt: null,
+    expiryBasis: "unknown",
     estimatedExpiresAt: null,
     safeEstimatedExpiresAt: observedAt,
     estimatedExpiresAtMs: Number.POSITIVE_INFINITY,
@@ -568,6 +612,8 @@ function restoreBaselineCredit(credit: BankedResetCreditActiveCredit): Estimated
     return {
       ...credit,
       acquiredAt: null,
+      expiresAt: null,
+      expiryBasis: "unknown",
       estimatedExpiresAt: null,
       safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt ?? credit.firstObservedAt,
       estimatedExpiresAtMs: Number.POSITIVE_INFINITY,
@@ -575,7 +621,7 @@ function restoreBaselineCredit(credit: BankedResetCreditActiveCredit): Estimated
     };
   }
 
-  const estimatedExpiresAtMs = parseIsoMs(credit.estimatedExpiresAt);
+  const estimatedExpiresAtMs = parseIsoMs(credit.expiresAt ?? credit.estimatedExpiresAt);
   if (parseIsoMs(credit.acquiredAt) === null || estimatedExpiresAtMs === null) {
     return null;
   }
@@ -583,6 +629,7 @@ function restoreBaselineCredit(credit: BankedResetCreditActiveCredit): Estimated
   return {
     ...credit,
     acquiredAt: credit.acquiredAt,
+    expiresAt: credit.expiresAt ?? credit.estimatedExpiresAt,
     estimatedExpiresAt: credit.estimatedExpiresAt,
     safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt ?? credit.estimatedExpiresAt,
     estimatedExpiresAtMs,
@@ -719,10 +766,46 @@ function serializeActiveCredit(credit: EstimatedCredit): BankedResetCreditActive
     id: credit.id,
     acquiredAt: credit.acquiredAt,
     firstObservedAt: credit.firstObservedAt,
+    expiresAt: credit.expiresAt,
+    expiryBasis: credit.expiryBasis,
     estimatedExpiresAt: credit.estimatedExpiresAt,
     safeEstimatedExpiresAt: credit.safeEstimatedExpiresAt,
     estimateBasis: credit.estimateBasis,
-    sourceId: credit.sourceId ?? null
+    sourceId: credit.sourceId ?? null,
+    resetType: credit.resetType ?? null,
+    status: credit.status ?? null,
+    title: credit.title ?? null,
+    description: credit.description ?? null
+  };
+}
+
+function createOfficialCredit(
+  credit: CodexRateLimitResetCredit,
+  observedAt: string
+): EstimatedCredit | null {
+  const grantedAtMs = parseIsoMs(credit.grantedAt);
+  const observedAtMs = parseIsoMs(observedAt);
+  const expiresAtMs = parseIsoMs(credit.expiresAt);
+  if (grantedAtMs === null || observedAtMs === null) {
+    return null;
+  }
+
+  return {
+    id: credit.id,
+    acquiredAt: credit.grantedAt,
+    firstObservedAt: observedAt,
+    expiresAt: credit.expiresAt,
+    expiryBasis: "official",
+    estimatedExpiresAt: null,
+    safeEstimatedExpiresAt: null,
+    estimatedExpiresAtMs: expiresAtMs ?? Number.POSITIVE_INFINITY,
+    safeEstimatedExpiresAtMs: expiresAtMs ?? Number.POSITIVE_INFINITY,
+    estimateBasis: "official-detail",
+    sourceId: "codex-app-server-official-detail",
+    resetType: credit.resetType,
+    status: credit.status,
+    title: credit.title,
+    description: credit.description
   };
 }
 
@@ -860,15 +943,28 @@ export function analyzeBankedResetCreditObservations(
     });
   }
 
-  const latestObservedMs = parseIsoMs(ordered.at(-1)?.observedAt ?? null) ?? Date.now();
+  const latestObservation = ordered.at(-1);
+  const latestObservedMs = parseIsoMs(latestObservation?.observedAt ?? null) ?? Date.now();
+  const officialCredits = latestObservation?.officialCredits?.map((credit) => createOfficialCredit(credit, latestObservation.observedAt))
+    .filter((credit): credit is EstimatedCredit => credit !== null) ?? [];
+  const officialIds = new Set(officialCredits.map((credit) => credit.id));
+  const inferredRemainder = estimatedCredits.filter((credit) => !officialIds.has(credit.id)).slice(officialCredits.length);
+  const reconciledCredits = latestObservation?.officialCredits === null || latestObservation?.officialCredits === undefined
+    ? estimatedCredits
+    : [...officialCredits, ...inferredRemainder].slice(0, latestObservation.availableCount);
   const activeExpirations = estimatedCredits
     .filter((credit) => credit.estimatedExpiresAtMs > latestObservedMs)
     .sort((a, b) => a.estimatedExpiresAtMs - b.estimatedExpiresAtMs);
   const activeSafeExpirations = estimatedCredits
     .filter((credit) => credit.safeEstimatedExpiresAtMs > latestObservedMs)
     .sort((a, b) => a.safeEstimatedExpiresAtMs - b.safeEstimatedExpiresAtMs);
-  const activeCredits = estimatedCredits.slice();
+  const activeCredits = reconciledCredits.slice();
   sortEstimatedCredits(activeCredits);
+  const nextOfficialExpiresAt = officialCredits
+    .map((credit) => credit.expiresAt)
+    .filter((value): value is string => value !== null)
+    .sort()[0] ?? null;
+  const nextEstimatedExpiresAt = activeExpirations[0]?.estimatedExpiresAt ?? null;
 
   return {
     currentAvailableCount: ordered.at(-1)?.availableCount ?? null,
@@ -880,8 +976,15 @@ export function analyzeBankedResetCreditObservations(
     inferredUnknownDecreaseCount: events
       .filter((event) => event.kind === "decrease-unknown")
       .reduce((sum, event) => sum + event.count, 0),
-    nextEstimatedExpiresAt: activeExpirations[0]?.estimatedExpiresAt ?? null,
+    nextEstimatedExpiresAt,
     nextSafeEstimatedExpiresAt: activeSafeExpirations[0]?.safeEstimatedExpiresAt ?? null,
+    nextExpiresAt: nextOfficialExpiresAt ?? nextEstimatedExpiresAt,
+    nextExpiryBasis: nextOfficialExpiresAt ? "official" : nextEstimatedExpiresAt ? "estimated" : null,
+    officialDetailCount: officialCredits.length,
+    officialDetailsComplete:
+      latestObservation?.officialCredits !== null &&
+      latestObservation?.officialCredits !== undefined &&
+      officialCredits.length === (latestObservation?.availableCount ?? 0),
     activeCredits: activeCredits.map(serializeActiveCredit),
     events
   };

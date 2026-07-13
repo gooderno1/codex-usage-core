@@ -314,6 +314,8 @@ function rateLimitSnapshot(
             id: "existing:2026-07-02T10:14:15.667Z:1",
             acquiredAt: null,
             firstObservedAt: "2026-07-02T10:14:15.667Z",
+            expiresAt: null,
+            expiryBasis: "unknown",
             estimatedExpiresAt: null,
             safeEstimatedExpiresAt: "2026-07-02T10:14:15.667Z",
             estimateBasis: "existing-at-first-observation",
@@ -323,6 +325,8 @@ function rateLimitSnapshot(
             id: "existing:2026-07-02T10:14:15.667Z:2",
             acquiredAt: null,
             firstObservedAt: "2026-07-02T10:14:15.667Z",
+            expiresAt: null,
+            expiryBasis: "unknown",
             estimatedExpiresAt: null,
             safeEstimatedExpiresAt: "2026-07-02T10:14:15.667Z",
             estimateBasis: "existing-at-first-observation",
@@ -332,6 +336,8 @@ function rateLimitSnapshot(
             id: "public-grant:2026-06-30T00:00:00.000Z:codex-usage-incident-compensation-2026-06-30",
             acquiredAt: "2026-06-30T00:00:00.000Z",
             firstObservedAt: "2026-07-02T10:14:15.667Z",
+            expiresAt: "2026-07-30T00:00:00.000Z",
+            expiryBasis: "estimated",
             estimatedExpiresAt: "2026-07-30T00:00:00.000Z",
             safeEstimatedExpiresAt: "2026-07-29T00:00:00.000Z",
             estimateBasis: "public-grant",
@@ -377,7 +383,7 @@ process.stdin.on("data", (chunk) => {
         console.log(JSON.stringify({ id: 1, result: { userAgent: "fake", codexHome: "C:/fake/.codex", platformFamily: "windows", platformOs: "windows" } }));
       }
       if (message.id === 2 && message.method === "account/rateLimits/read") {
-        console.log(JSON.stringify({ id: 2, result: { rateLimitResetCredits: { availableCount: 2 }, rateLimits: bucket, rateLimitsByLimitId: { codex: bucket } } }));
+        console.log(JSON.stringify({ id: 2, result: { rateLimitResetCredits: { availableCount: 2, credits: [{ id: "RateLimitResetCredit_1", resetType: "codexRateLimits", status: "available", grantedAt: 1781654400, expiresAt: 1784246400, title: "Full reset", description: "Ready to redeem" }] }, rateLimits: bucket, rateLimitsByLimitId: { codex: bucket } } }));
       }
     }
     index = buffer.indexOf("\\n");
@@ -396,8 +402,42 @@ process.stdin.on("data", (chunk) => {
   assert.equal(snapshot.observedAt, "2026-07-01T10:00:00.000Z");
   assert.equal(snapshot.source, "codex-app-server");
   assert.equal(snapshot.rateLimitResetCredits?.availableCount, 2);
+  assert.equal(snapshot.rateLimitResetCredits?.credits?.[0]?.grantedAt, "2026-06-17T00:00:00.000Z");
+  assert.equal(snapshot.rateLimitResetCredits?.credits?.[0]?.expiresAt, "2026-07-17T00:00:00.000Z");
+  assert.equal(snapshot.rateLimitResetCredits?.credits?.[0]?.status, "available");
   assert.equal(snapshot.rateLimits.primary?.resetsAt, "2026-07-01T15:16:17.000Z");
   assert.equal(snapshot.rateLimitsByLimitId?.codex?.secondary?.windowDurationMins, 10080);
+}
+
+{
+  const result = analyzeBankedResetCreditObservations([
+    {
+      observedAt: "2026-07-13T00:00:00.000Z",
+      availableCount: 2,
+      officialCredits: [
+        {
+          id: "RateLimitResetCredit_1",
+          resetType: "codexRateLimits",
+          status: "available",
+          grantedAt: "2026-06-17T00:00:00.000Z",
+          grantedAtUnixSeconds: 1781654400,
+          expiresAt: "2026-07-17T00:00:00.000Z",
+          expiresAtUnixSeconds: 1784246400,
+          title: "Full reset",
+          description: "Ready to redeem"
+        }
+      ]
+    }
+  ]);
+
+  assert.equal(result.officialDetailCount, 1);
+  assert.equal(result.officialDetailsComplete, false);
+  assert.equal(result.nextExpiresAt, "2026-07-17T00:00:00.000Z");
+  assert.equal(result.nextExpiryBasis, "official");
+  const officialCredit = result.activeCredits.find((credit) => credit.estimateBasis === "official-detail");
+  assert.equal(officialCredit?.expiryBasis, "official");
+  assert.equal(officialCredit?.expiresAt, "2026-07-17T00:00:00.000Z");
+  assert.equal(result.activeCredits.length, 2);
 }
 
 void runAppServerReadTest()
