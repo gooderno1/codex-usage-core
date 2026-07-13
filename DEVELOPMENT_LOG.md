@@ -5,6 +5,7 @@
 - 开发原因：两个下游升级时会把 `v0.1.0-dev.8` 生成的 `activeCredits[]` 缓存作为 baseline 传回，新字段 `expiryBasis` 在旧缓存中不存在。
 - 实现方式：恢复已知旧 credit 时，统一以 `expiresAt ?? estimatedExpiresAt` 迁移到新字段，并把缺失的 `expiryBasis` 设为 `estimated`；首次未知库存仍设为 `unknown`。
 - 当前结果：升级后的首次刷新无需清空本地历史即可平滑迁移到官方/估算统一到期模型。
+- 下游同步：`codex-companion v0.3.8-dev.1` 已升级到本版本并接入官方到期展示/通知；`dev-ledger v0.14.0-dev.25` 已升级到本版本并接入采集、汇总、页面展示和字段校验。两个下游构建通过；live 额度契约校验另发现本机当前仅返回 10080 分钟 primary、缺少 secondary 的既有问题，已分别记录，不影响本次 banked reset 明细解析。
 - 验证方式：执行 `npm run test` 与 `git diff --check`。
 
 ## [2026-07-13] v0.1.0-dev.9 feat: 接入官方赠送重置到期明细
