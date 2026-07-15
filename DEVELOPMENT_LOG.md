@@ -10,7 +10,7 @@
 - 关键字段：session 观测使用 `windowMinutes`；app-server 快照使用 `windowDurationMins`；窗口业务类型使用 `CodexQuotaWindowKind=five-hour | weekly | unknown`。
 - 验证样例：脱敏 fixture 从 `80% / 300min` 切换为 `2% / 10080min`，并提供后续稳定边界观测；旧逻辑输出 `resetCount=1`，新逻辑输出 `resetCount=0`。同一迁移区间内 `availableCount=1 -> 0` 输出 `decrease-unknown`，不输出 `use`。
 - 当前结果：核心包可安全处理当前仅有周额度 primary 的契约，且不会跨窗口类型污染 reset 或 banked reset 使用计数；对外输出仍不包含原始会话正文。
-- 下游同步：计划同步到 `codex-companion v0.3.9-dev.1` 与 `dev-ledger v0.14.0-dev.26`，两个下游按窗口时长选择 5H / 周额度，不再固定绑定 primary / secondary。
+- 下游同步：`codex-companion v0.3.9-dev.1` 与 `dev-ledger v0.14.0-dev.26` 均已升级到本版本并推送；两个下游按窗口时长选择 5H / 周额度，不再固定绑定 primary / secondary。Companion 的 live 快照、DevLedger 的 Agent / Master 完整聚合均验证 `primary=10080 / secondary=null` 时周额度可用、5H 明确为未观测。
 - 验证方式：执行 `npm run build`、`npm run test` 和 `git diff --check`；新增 `fixtures/quota-window-contract-transition.json` 及仅 `primary=10080 / secondary=null` 的假 app-server 覆盖。
 
 ## [2026-07-13] v0.1.0-dev.10 fix: 兼容旧版到期估算 baseline
