@@ -1,5 +1,12 @@
 # DEVELOPMENT LOG
 
+## [2026-07-15] v0.1.0-dev.11 docs: 完成核心包公开准备
+
+- 开发原因：`codex-companion` 公开后，GitHub Actions 无法读取仍为 private 的共享核心仓库；用户确认两个仓库都可以公开，需要补齐开源许可证、安全报告和贡献边界。
+- 实现方式：扫描当前跟踪文件、敏感文件名和完整 Git 历史中的常见 token、私钥、访问密钥及密码模式；检查 fixture、源码、测试和文档中的账号标识、会话标识与本机绝对路径；新增 MIT `LICENSE`、`SECURITY.md` 和 `CONTRIBUTING.md`，并在 README 中明确公开源码、Git tag 依赖、`private=true` 防误发包和 local-first 隐私边界。
+- 当前结果：审计未发现凭据、私钥、账号/会话标识、原始 Codex session、用户/模型正文、私有源码或敏感绝对路径；核心包具备公开仓库所需的许可证与安全协作说明。
+- 验证方式：执行 `npm ci`、`npm run build`、`npm run test`、完整 Git 历史敏感模式扫描和 `git diff --check`；公开后再验证匿名 HTTPS clone、tag `v0.1.0-dev.11` 读取和两个下游的 CI 安装。
+
 ## [2026-07-15] v0.1.0-dev.11 fix: 兼容周额度迁移到 primary
 
 - 开发原因：本机 Codex app-server 已从旧版 `primary=300 / secondary=10080` 切换为 `primary=10080 / secondary=null`；旧逻辑会把槽位迁移误判为一次额度 reset，并可能把同区间的 banked reset credit 减少误归因为使用。

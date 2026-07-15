@@ -4,6 +4,13 @@
 
 本项目是非官方工具，不隶属于 OpenAI。核心包只处理本机解析后的结构化数据，不要求上传原始 Codex session、用户输入正文、模型输出正文或仓库源码。
 
+## 公开与发布边界
+
+- 源码以 MIT License 公开，问题反馈与贡献规范分别见 `SECURITY.md` 和 `CONTRIBUTING.md`。
+- 当前正式依赖方式是固定 Git tag；`package.json` 保留 `private=true`，用于避免在尚未建立 npm 发布流程前误发布包。
+- 下游应使用公开 HTTPS Git URL，不依赖开发者本机 SSH key 或私有 GitHub 凭据。
+- 公开仓库不改变 local-first 边界：核心包不上传原始 Codex session、用户输入、模型输出、账号凭据或私有仓库源码。
+
 ## 当前能力
 
 - 共享 `QuotaCycleObservation`、`QuotaResetEvent`、`QuotaUsageSegment` 等类型。
