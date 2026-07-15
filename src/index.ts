@@ -13,6 +13,7 @@ export type {
   BankedResetCreditPublicGrantSeed,
   CodexAccountRateLimitsReadOptions,
   CodexAccountRateLimitsSnapshot,
+  CodexQuotaWindowKind,
   CodexCreditsSnapshot,
   CodexRateLimitResetCreditsSummary,
   CodexRateLimitSnapshot,
@@ -26,6 +27,15 @@ export type {
   QuotaResetEvidence,
   QuotaUsageSegment
 } from "./contracts.js";
+
+export {
+  classifyCodexQuotaWindowDuration,
+  CODEX_FIVE_HOUR_WINDOW_MINUTES,
+  CODEX_WEEKLY_WINDOW_MINUTES,
+  CODEX_WINDOW_DURATION_TOLERANCE_MINUTES,
+  isCodexQuotaWindowDuration,
+  quotaWindowDurationsMatch
+} from "./quota-window.js";
 
 export {
   analyzeBankedResetCreditObservations,

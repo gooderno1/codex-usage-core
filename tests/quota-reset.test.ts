@@ -1,7 +1,13 @@
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   analyzeBankedResetCreditObservations,
   analyzeQuotaObservations,
+  classifyCodexQuotaWindowDuration,
+  CODEX_FIVE_HOUR_WINDOW_MINUTES,
+  CODEX_WEEKLY_WINDOW_MINUTES,
+  isCodexQuotaWindowDuration,
   readCodexAccountRateLimits
 } from "../src/index.js";
 import type { BankedResetCreditObservation, CodexRateLimitSnapshot, QuotaCycleObservation } from "../src/index.js";
@@ -31,6 +37,22 @@ function addStableObservations(
   for (let index = 0; index < count; index += 1) {
     base.push(observation(new Date(startMs + index * 30 * 60 * 1000).toISOString(), 0, resetsAt));
   }
+}
+
+{
+  assert.equal(classifyCodexQuotaWindowDuration(300), "five-hour");
+  assert.equal(classifyCodexQuotaWindowDuration(10080), "weekly");
+  assert.equal(classifyCodexQuotaWindowDuration(null), "unknown");
+  assert.equal(isCodexQuotaWindowDuration(300, CODEX_FIVE_HOUR_WINDOW_MINUTES), true);
+  assert.equal(isCodexQuotaWindowDuration(10080, CODEX_WEEKLY_WINDOW_MINUTES), true);
+}
+
+{
+  const fixture = JSON.parse(
+    readFileSync(resolve(process.cwd(), "fixtures/quota-window-contract-transition.json"), "utf8")
+  ) as { observations: QuotaCycleObservation[]; expectedResetCount: number };
+  const result = analyzeQuotaObservations(fixture.observations, { comparisonScope: "timeline" });
+  assert.equal(result.resetCount, fixture.expectedResetCount);
 }
 
 {
@@ -110,6 +132,41 @@ function rateLimitSnapshot(
     credits: null,
     rateLimitReachedType: null
   };
+}
+
+function weeklyPrimaryRateLimitSnapshot(usedPercent: number, resetsAt: string): CodexRateLimitSnapshot {
+  return {
+    limitId: "codex",
+    limitName: null,
+    planType: "prolite",
+    primary: {
+      usedPercent,
+      windowDurationMins: 10080,
+      resetsAt
+    },
+    secondary: null,
+    credits: null,
+    rateLimitReachedType: null
+  };
+}
+
+{
+  const result = analyzeBankedResetCreditObservations([
+    {
+      observedAt: "2030-01-01T00:00:00.000Z",
+      availableCount: 1,
+      rateLimits: rateLimitSnapshot(80, "2030-01-01T05:00:00.000Z")
+    },
+    {
+      observedAt: "2030-01-02T02:35:24.000Z",
+      availableCount: 0,
+      rateLimits: weeklyPrimaryRateLimitSnapshot(2, "2030-01-09T02:35:24.000Z")
+    }
+  ]);
+
+  assert.equal(result.inferredUseCount, 0);
+  assert.equal(result.inferredUnknownDecreaseCount, 1);
+  assert.equal(result.events[0]?.kind, "decrease-unknown");
 }
 
 {
@@ -409,6 +466,52 @@ process.stdin.on("data", (chunk) => {
   assert.equal(snapshot.rateLimitsByLimitId?.codex?.secondary?.windowDurationMins, 10080);
 }
 
+async function runWeeklyPrimaryOnlyAppServerReadTest() {
+  const fakeServer = `
+const bucket = {
+  limitId: "codex",
+  limitName: null,
+  planType: "prolite",
+  primary: { usedPercent: 2, windowDurationMins: 10080, resetsAt: 1894156524 },
+  secondary: null,
+  credits: { hasCredits: false, unlimited: false, balance: "redacted" },
+  rateLimitReachedType: null
+};
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let index = buffer.indexOf("\\n");
+  while (index >= 0) {
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (line) {
+      const message = JSON.parse(line);
+      if (message.id === 1) {
+        console.log(JSON.stringify({ id: 1, result: { userAgent: "fake", codexHome: "C:/fake/.codex", platformFamily: "windows", platformOs: "windows" } }));
+      }
+      if (message.id === 2 && message.method === "account/rateLimits/read") {
+        console.log(JSON.stringify({ id: 2, result: { rateLimitResetCredits: { availableCount: 0, credits: [] }, rateLimits: bucket, rateLimitsByLimitId: { codex: bucket } } }));
+      }
+    }
+    index = buffer.indexOf("\\n");
+  }
+});
+`;
+
+  const snapshot = await readCodexAccountRateLimits({
+    command: process.execPath,
+    args: ["-e", fakeServer],
+    shell: false,
+    observedAt: "2030-01-02T02:35:24.000Z",
+    timeoutMs: 5000
+  });
+
+  assert.equal(snapshot.rateLimits.primary?.windowDurationMins, 10080);
+  assert.equal(snapshot.rateLimits.secondary, null);
+  assert.equal(classifyCodexQuotaWindowDuration(snapshot.rateLimits.primary?.windowDurationMins), "weekly");
+}
+
 {
   const result = analyzeBankedResetCreditObservations([
     {
@@ -440,7 +543,7 @@ process.stdin.on("data", (chunk) => {
   assert.equal(result.activeCredits.length, 2);
 }
 
-void runAppServerReadTest()
+void Promise.all([runAppServerReadTest(), runWeeklyPrimaryOnlyAppServerReadTest()])
   .then(() => {
     console.log("quota-reset tests passed");
   })

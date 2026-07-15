@@ -1,0 +1,27 @@
+{
+  "description": "Codex 额度契约从 300 分钟 primary 切换为 10080 分钟 primary，不应计为 reset。",
+  "observations": [
+    {
+      "observedAt": "2030-01-01T00:00:00.000Z",
+      "usedPercent": 80,
+      "resetsAt": "2030-01-01T05:00:00.000Z",
+      "windowMinutes": 300,
+      "sourceId": "old-five-hour"
+    },
+    {
+      "observedAt": "2030-01-02T02:35:24.000Z",
+      "usedPercent": 2,
+      "resetsAt": "2030-01-09T02:35:24.000Z",
+      "windowMinutes": 10080,
+      "sourceId": "new-weekly-primary"
+    },
+    {
+      "observedAt": "2030-01-02T03:35:24.000Z",
+      "usedPercent": 3,
+      "resetsAt": "2030-01-09T02:35:24.000Z",
+      "windowMinutes": 10080,
+      "sourceId": "new-weekly-primary-confirmation"
+    }
+  ],
+  "expectedResetCount": 0
+}

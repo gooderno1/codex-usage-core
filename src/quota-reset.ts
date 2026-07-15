@@ -8,6 +8,7 @@ import type {
   QuotaResetEvidence,
   QuotaUsageSegment
 } from "./contracts.js";
+import { quotaWindowDurationsMatch } from "./quota-window.js";
 
 const DEFAULT_DROP_THRESHOLD_PERCENT = 5;
 const DEFAULT_HIGH_WATER_PERCENT = 50;
@@ -91,7 +92,8 @@ function getQuotaResetObservationEvidence(
     !Number.isFinite(previous.usedPercent) ||
     !Number.isFinite(current.usedPercent) ||
     !Number.isFinite(previousResetMs) ||
-    !Number.isFinite(currentResetMs)
+    !Number.isFinite(currentResetMs) ||
+    !quotaWindowDurationsMatch(previous.windowMinutes, current.windowMinutes)
   ) {
     return null;
   }
@@ -340,7 +342,8 @@ function addStabilizedBoundaryResetCandidates(
       if (
         !Number.isFinite(previous.usedPercent) ||
         !Number.isFinite(previousResetMs) ||
-        !Number.isFinite(previousBoundaryMs)
+        !Number.isFinite(previousBoundaryMs) ||
+        !quotaWindowDurationsMatch(previous.windowMinutes, current.windowMinutes)
       ) {
         continue;
       }

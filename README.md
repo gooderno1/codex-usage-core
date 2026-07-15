@@ -7,6 +7,7 @@
 ## 当前能力
 
 - 共享 `QuotaCycleObservation`、`QuotaResetEvent`、`QuotaUsageSegment` 等类型。
+- 按 `windowMinutes` 将额度窗口识别为 `five-hour / weekly / unknown`；兼容新版仅返回 `primary=10080`、`secondary=null` 的周额度契约。
 - 分析 5H / 周额度观测序列。
 - 识别相邻下降 reset。
 - 识别周额度 `24h` 稳定边界回看 reset。
@@ -52,6 +53,8 @@ reset 口径：
 
 - 本包没有官方“充值次数”数据，也不从网络或账单推断充值。
 - `resetCount / resetEvents` 只表示本地 `rate_limits` 中稳定确认的额度窗口 reset：`used_percent` 回落、`resets_at` 后移，且满足高水位、边界贴近或稳定边界回看证据之一。
+- reset 候选前后必须具有完全相同且可解析的 `windowMinutes`；`300 -> 10080` 等额度契约迁移不会计为 reset，也不会作为 banked reset credit 已使用的证据。
+- `primary / secondary` 只表示接口槽位，不再等同于固定业务语义；调用方应使用 `classifyCodexQuotaWindowDuration` 按时长识别 5H 或周额度。
 - `resetEvents[].boundaryAt` 来自 reset 后 `resetsAt - windowMinutes`。
 - `resetEvents[].afterWindowResetsAt` 表示 reset 后额度窗口的过期时间。
 - `usageSegments[].startAt / endAt / usedPercent` 记录每段 reset 前后的额度使用区间和最高已用百分比。

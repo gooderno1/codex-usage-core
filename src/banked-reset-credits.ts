@@ -18,6 +18,7 @@ import type {
   CodexRateLimitSnapshot,
   CodexRateLimitWindowSnapshot
 } from "./contracts.js";
+import { quotaWindowDurationsMatch } from "./quota-window.js";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_VALIDITY_DAYS = 30;
@@ -371,6 +372,7 @@ function windowWasReset(
   return (
     previousResetMs !== null &&
     currentResetMs !== null &&
+    quotaWindowDurationsMatch(previous.windowDurationMins, current.windowDurationMins) &&
     currentResetMs > previousResetMs &&
     current.usedPercent < previous.usedPercent
   );

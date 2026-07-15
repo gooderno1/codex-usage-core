@@ -1,5 +1,18 @@
 # DEVELOPMENT LOG
 
+## [2026-07-15] v0.1.0-dev.11 fix: 兼容周额度迁移到 primary
+
+- 开发原因：本机 Codex app-server 已从旧版 `primary=300 / secondary=10080` 切换为 `primary=10080 / secondary=null`；旧逻辑会把槽位迁移误判为一次额度 reset，并可能把同区间的 banked reset credit 减少误归因为使用。
+- 实现方式：新增共享窗口分类常量与 `classifyCodexQuotaWindowDuration / isCodexQuotaWindowDuration`；reset 相邻比较、`24h` 稳定边界回看和 banked reset 使用证据均要求前后窗口时长完全一致；版本升级为 `v0.1.0-dev.11`。
+- 适用范围：处理 Codex 本地 session `rate_limits` 和 app-server `account/rateLimits/read` 返回的 `300` 分钟、`10080` 分钟或未知时长窗口；`primary / secondary` 仅作为槽位，不作为 5H / 周额度的固定语义。
+- 触发条件：`300` 分钟分类为 `five-hour`，`10080` 分钟分类为 `weekly`，分类容差为 `60` 分钟；reset/use 证据要求相邻观测的实际 `windowMinutes / windowDurationMins` 完全相等。
+- 排除条件：前后时长不等、任一时长缺失或不可解析时，不生成 reset 候选，也不把 banked reset credit 减少归因为使用；不修改百分比下降 `5%`、高水位 `50%`、确认延迟 `30min`、确认窗口 `6h` 和漂移容差 `15min`。
+- 关键字段：session 观测使用 `windowMinutes`；app-server 快照使用 `windowDurationMins`；窗口业务类型使用 `CodexQuotaWindowKind=five-hour | weekly | unknown`。
+- 验证样例：脱敏 fixture 从 `80% / 300min` 切换为 `2% / 10080min`，并提供后续稳定边界观测；旧逻辑输出 `resetCount=1`，新逻辑输出 `resetCount=0`。同一迁移区间内 `availableCount=1 -> 0` 输出 `decrease-unknown`，不输出 `use`。
+- 当前结果：核心包可安全处理当前仅有周额度 primary 的契约，且不会跨窗口类型污染 reset 或 banked reset 使用计数；对外输出仍不包含原始会话正文。
+- 下游同步：计划同步到 `codex-companion v0.3.9-dev.1` 与 `dev-ledger v0.14.0-dev.26`，两个下游按窗口时长选择 5H / 周额度，不再固定绑定 primary / secondary。
+- 验证方式：执行 `npm run build`、`npm run test` 和 `git diff --check`；新增 `fixtures/quota-window-contract-transition.json` 及仅 `primary=10080 / secondary=null` 的假 app-server 覆盖。
+
 ## [2026-07-13] v0.1.0-dev.10 fix: 兼容旧版到期估算 baseline
 
 - 开发原因：两个下游升级时会把 `v0.1.0-dev.8` 生成的 `activeCredits[]` 缓存作为 baseline 传回，新字段 `expiryBasis` 在旧缓存中不存在。

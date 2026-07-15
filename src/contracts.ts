@@ -1,4 +1,5 @@
 export type QuotaResetComparisonScope = "session" | "timeline";
+export type CodexQuotaWindowKind = "five-hour" | "weekly" | "unknown";
 
 export interface QuotaCycleObservation {
   observedAt: string;

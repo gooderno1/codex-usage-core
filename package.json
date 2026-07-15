@@ -1,6 +1,6 @@
 {
   "name": "@lifeinhand/codex-usage-core",
-  "version": "0.1.0-dev.10",
+  "version": "0.1.0-dev.11",
   "private": true,
   "description": "Codex 本地用量、额度周期与重置检测共享核心包",
   "license": "MIT",
