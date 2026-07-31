@@ -130,7 +130,7 @@ export interface CodexRateLimitResetCredit {
 
 export interface CodexAccountRateLimitsSnapshot {
   observedAt: string;
-  source: "codex-app-server";
+  source: "codex-app-server" | "codex-wham-usage";
   rateLimitResetCredits: CodexRateLimitResetCreditsSummary | null;
   rateLimits: CodexRateLimitSnapshot;
   rateLimitsByLimitId: Record<string, CodexRateLimitSnapshot> | null;
@@ -144,6 +144,16 @@ export interface CodexAccountRateLimitsReadOptions {
   observedAt?: string;
   clientName?: string;
   clientVersion?: string;
+}
+
+export interface CodexUsageRateLimitsReadOptions {
+  authPath?: string;
+  codexHome?: string;
+  endpoint?: string;
+  timeoutMs?: number;
+  observedAt?: string;
+  clientVersion?: string;
+  useEnvProxy?: boolean;
 }
 
 export interface BankedResetCreditObservation {

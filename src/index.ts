@@ -13,6 +13,7 @@ export type {
   BankedResetCreditPublicGrantSeed,
   CodexAccountRateLimitsReadOptions,
   CodexAccountRateLimitsSnapshot,
+  CodexUsageRateLimitsReadOptions,
   CodexQuotaWindowKind,
   CodexCreditsSnapshot,
   CodexRateLimitResetCreditsSummary,
@@ -44,6 +45,11 @@ export {
   normalizeCodexAccountRateLimitsReadResult,
   readCodexAccountRateLimits
 } from "./banked-reset-credits.js";
+
+export {
+  normalizeCodexWhamUsageResult,
+  readCodexUsageRateLimits
+} from "./wham-usage.js";
 
 export {
   analyzeQuotaObservations,

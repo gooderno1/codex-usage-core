@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   analyzeBankedResetCreditObservations,
   analyzeQuotaObservations,
@@ -8,7 +10,9 @@ import {
   CODEX_FIVE_HOUR_WINDOW_MINUTES,
   CODEX_WEEKLY_WINDOW_MINUTES,
   isCodexQuotaWindowDuration,
-  readCodexAccountRateLimits
+  normalizeCodexWhamUsageResult,
+  readCodexAccountRateLimits,
+  readCodexUsageRateLimits
 } from "../src/index.js";
 import type { BankedResetCreditObservation, CodexRateLimitSnapshot, QuotaCycleObservation } from "../src/index.js";
 
@@ -45,6 +49,59 @@ function addStableObservations(
   assert.equal(classifyCodexQuotaWindowDuration(null), "unknown");
   assert.equal(isCodexQuotaWindowDuration(300, CODEX_FIVE_HOUR_WINDOW_MINUTES), true);
   assert.equal(isCodexQuotaWindowDuration(10080, CODEX_WEEKLY_WINDOW_MINUTES), true);
+}
+
+{
+  const snapshot = normalizeCodexWhamUsageResult(
+    {
+      plan_type: "prolite",
+      rate_limit: {
+        primary_window: {
+          used_percent: 8,
+          limit_window_seconds: 18_000,
+          reset_at: 1_782_918_977
+        },
+        secondary_window: {
+          used_percent: 14,
+          limit_window_seconds: 604_800,
+          reset_at: 1_783_394_530
+        }
+      },
+      credits: {
+        has_credits: false,
+        unlimited: false,
+        balance: "redacted"
+      },
+      rate_limit_reset_credits: {
+        available_count: 2,
+        applicable_available_count: 2
+      },
+      additional_rate_limits: [
+        {
+          limit_name: "GPT-5.3-Codex-Spark",
+          rate_limit: {
+            primary_window: {
+              used_percent: 3,
+              limit_window_seconds: 604_800,
+              reset_at: 1_783_394_530
+            },
+            secondary_window: null
+          }
+        }
+      ]
+    },
+    "2026-07-31T05:00:00.000Z"
+  );
+
+  assert.equal(snapshot.source, "codex-wham-usage");
+  assert.equal(snapshot.rateLimits.primary?.windowDurationMins, 300);
+  assert.equal(snapshot.rateLimits.secondary?.windowDurationMins, 10080);
+  assert.equal(snapshot.rateLimitResetCredits?.availableCount, 2);
+  assert.equal(snapshot.rateLimitResetCredits?.credits, null);
+  assert.equal(
+    snapshot.rateLimitsByLimitId?.["additional:gpt-5-3-codex-spark"]?.primary?.windowDurationMins,
+    10080
+  );
 }
 
 {
@@ -512,6 +569,75 @@ process.stdin.on("data", (chunk) => {
   assert.equal(classifyCodexQuotaWindowDuration(snapshot.rateLimits.primary?.windowDurationMins), "weekly");
 }
 
+async function runWhamUsageReadTest() {
+  const temporaryDirectory = mkdtempSync(join(tmpdir(), "codex-usage-core-wham-test-"));
+  const authPath = join(temporaryDirectory, "auth.json");
+  writeFileSync(
+    authPath,
+    JSON.stringify({
+      tokens: {
+        access_token: "fixture-access-token",
+        account_id: "fixture-account-id"
+      }
+    })
+  );
+
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, "Bearer fixture-access-token");
+    assert.equal(request.headers["chatgpt-account-id"], "fixture-account-id");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        plan_type: "prolite",
+        rate_limit: {
+          primary_window: {
+            used_percent: 11,
+            limit_window_seconds: 18_000,
+            reset_at: 1_782_918_977
+          },
+          secondary_window: {
+            used_percent: 17,
+            limit_window_seconds: 604_800,
+            reset_at: 1_783_394_530
+          }
+        },
+        credits: {
+          has_credits: false,
+          unlimited: false,
+          balance: "redacted"
+        },
+        rate_limit_reset_credits: {
+          available_count: 2
+        }
+      })
+    );
+  });
+
+  try {
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const snapshot = await readCodexUsageRateLimits({
+      authPath,
+      endpoint: `http://127.0.0.1:${address.port}/backend-api/wham/usage`,
+      observedAt: "2026-07-31T05:00:00.000Z",
+      clientVersion: "0.2.0-dev.1",
+      timeoutMs: 5_000,
+      useEnvProxy: false
+    });
+
+    assert.equal(snapshot.source, "codex-wham-usage");
+    assert.equal(snapshot.rateLimits.primary?.windowDurationMins, 300);
+    assert.equal(snapshot.rateLimits.secondary?.windowDurationMins, 10080);
+    assert.equal(snapshot.rateLimitResetCredits?.availableCount, 2);
+  } finally {
+    await new Promise<void>((resolveClose, rejectClose) => {
+      server.close((error) => (error ? rejectClose(error) : resolveClose()));
+    });
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 {
   const result = analyzeBankedResetCreditObservations([
     {
@@ -543,7 +669,11 @@ process.stdin.on("data", (chunk) => {
   assert.equal(result.activeCredits.length, 2);
 }
 
-void Promise.all([runAppServerReadTest(), runWeeklyPrimaryOnlyAppServerReadTest()])
+void Promise.all([
+  runAppServerReadTest(),
+  runWeeklyPrimaryOnlyAppServerReadTest(),
+  runWhamUsageReadTest()
+])
   .then(() => {
     console.log("quota-reset tests passed");
   })

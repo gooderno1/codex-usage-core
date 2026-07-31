@@ -1,5 +1,17 @@
 # DEVELOPMENT LOG
 
+## [2026-07-31] v0.2.0-dev.1 feat: 接入 Codex 官方用量路径
+
+- 开发原因：本地 session `token_count.rate_limits` 与 app-server `account/rateLimits/read` 当前均只返回周额度，无法代表 Codex 官方桌面端用量页面的完整采集路径；两个下游需要在官方重新下发 5H 时自动恢复展示。
+- 实现方式：新增 `readCodexUsageRateLimits()`，读取本机 Codex ChatGPT 登录状态并请求官方桌面端使用的 `GET https://chatgpt.com/backend-api/wham/usage`；新增 `normalizeCodexWhamUsageResult()`，把 snake_case 响应规范化为现有 `CodexAccountRateLimitsSnapshot`；运行时增加 `undici`，支持 `HTTPS_PROXY / ALL_PROXY / NO_PROXY`。
+- 适用范围：主额度字段 `rate_limit.primary_window / secondary_window`，模型附加额度 `additional_rate_limits[]`，赠送重置总数 `rate_limit_reset_credits.available_count`。
+- 触发条件：`limit_window_seconds / 60` 生成 `windowDurationMins`；`300±60` 分钟由共享分类器识别为 `five-hour`，`10080±60` 分钟识别为 `weekly`；primary/secondary 只保留真实槽位，不绑定业务语义。
+- 排除条件：接口缺失的窗口不使用历史值补齐；接口失败时核心读取器抛出脱敏错误，由下游回退到 app-server 或 session；Wham 只提供赠送重置总数，不覆盖 app-server 的官方逐笔到期明细。
+- 隐私边界：access token 和 account id 只从本机 `auth.json` 读取并放入请求头，不进入返回值、错误信息、fixture、日志或仓库。
+- 验证样例：脱敏 Wham fixture 返回 `18000s / 604800s` 两个窗口，规范化后输出 `300min / 10080min`；假 HTTP 服务验证认证头和代理关闭分支；本机 live 响应输出周额度 `10080min / usedPercent=13`、5H 未观测，与 Codex 桌面端“1 周剩余 87%”一致。
+- 当前结果：核心包具备官方用量采集能力，并保持既有 app-server banked reset 读取兼容；窗口检测可在官方重新下发 300 分钟字段后自适应恢复 5H。
+- 验证方式：执行 `npm run build`、`npm run test`、live 官方接口脱敏读取和 `git diff --check`。
+
 ## [2026-07-15] v0.1.0-dev.11 docs: 完成核心包公开准备
 
 - 开发原因：`codex-companion` 公开后，GitHub Actions 无法读取仍为 private 的共享核心仓库；用户确认两个仓库都可以公开，需要补齐开源许可证、安全报告和贡献边界。

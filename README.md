@@ -16,6 +16,7 @@
 - 共享 `QuotaCycleObservation`、`QuotaResetEvent`、`QuotaUsageSegment` 等类型。
 - 按 `windowMinutes` 将额度窗口识别为 `five-hour / weekly / unknown`；兼容新版仅返回 `primary=10080`、`secondary=null` 的周额度契约。
 - 分析 5H / 周额度观测序列。
+- 通过 Codex 官方桌面端正在使用的 `GET /backend-api/wham/usage` 路径读取当前额度窗口，并把 `primary_window / secondary_window / additional_rate_limits` 规范化为共享快照。
 - 识别相邻下降 reset。
 - 识别周额度 `24h` 稳定边界回看 reset。
 - 对候选执行 `30min` 延迟、`6h` 确认窗口、`15min` 漂移排除和边界去重。
@@ -33,7 +34,8 @@ import {
   analyzeBankedResetCreditObservations,
   analyzeQuotaObservations,
   createBankedResetCreditObservationFromSnapshot,
-  readCodexAccountRateLimits
+  readCodexAccountRateLimits,
+  readCodexUsageRateLimits
 } from "@lifeinhand/codex-usage-core";
 
 const result = analyzeQuotaObservations(observations, {
@@ -41,6 +43,9 @@ const result = analyzeQuotaObservations(observations, {
 });
 
 const snapshot = await readCodexAccountRateLimits();
+const officialUsageSnapshot = await readCodexUsageRateLimits({
+  clientVersion: "your-app-version"
+});
 const bankedResetResult = analyzeBankedResetCreditObservations(
   [createBankedResetCreditObservationFromSnapshot(snapshot)],
   {
@@ -55,6 +60,16 @@ const bankedResetResult = analyzeBankedResetCreditObservations(
   }
 );
 ```
+
+官方用量采集口径：
+
+- `readCodexUsageRateLimits()` 读取本机 Codex ChatGPT 登录状态，只在内存中使用 `auth.json` 的 access token 和 account id 请求官方用量接口；不会返回、记录或上传 token。
+- 默认接口为 `https://chatgpt.com/backend-api/wham/usage`。该路径来自当前 Codex 官方桌面端实现，但不是公开稳定 API；调用失败时应由下游回退到 app-server 或本地 session 快照。
+- `rate_limit.primary_window / secondary_window` 规范化为 `rateLimits.primary / secondary`；`limit_window_seconds` 转换为 `windowDurationMins`。
+- `additional_rate_limits[]` 进入 `rateLimitsByLimitId`，key 使用 `additional:<limit-name-slug>`；主额度池固定保留为 `codex`。
+- `rate_limit_reset_credits.available_count` 只提供可用总数，不含逐笔到期明细；逐笔 `credits[]` 仍以 `account/rateLimits/read` 为准。
+- 核心包不会因某个窗口缺失而使用历史旧值补齐。当前响应只有 `10080` 分钟窗口时，5H 必须保持未观测；后续重新出现 `300` 分钟窗口时，调用方可通过 `classifyCodexQuotaWindowDuration()` 自动识别。
+- 若环境配置 `HTTPS_PROXY / ALL_PROXY`，读取器使用环境代理；`NO_PROXY` 由 HTTP 客户端处理。
 
 reset 口径：
 
