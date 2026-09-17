@@ -1,0 +1,10 @@
+{
+  "description": "脱敏样本：旧窗口延迟记录，观测时间不代表额度窗口身份",
+  "observations": [
+    {"observedAt":"2026-09-16T07:59:00Z","usedPercent":98,"resetsAt":"2026-09-19T08:00:00Z","windowMinutes":10080,"sourceId":"a"},
+    {"observedAt":"2026-09-16T08:00:10Z","usedPercent":98,"resetsAt":"2026-09-19T08:00:00Z","windowMinutes":10080,"sourceId":"b"},
+    {"observedAt":"2026-09-16T08:00:30Z","usedPercent":0,"resetsAt":"2026-09-23T08:00:00Z","windowMinutes":10080,"sourceId":"a"},
+    {"observedAt":"2026-09-16T08:35:00Z","usedPercent":5,"resetsAt":"2026-09-23T08:00:00Z","windowMinutes":10080,"sourceId":"a"},
+    {"observedAt":"2026-09-16T08:40:00Z","usedPercent":98,"resetsAt":"2026-09-19T08:00:00Z","windowMinutes":10080,"sourceId":"b"}
+  ]
+}

@@ -56,3 +56,11 @@ export {
   getQuotaObservationBoundaryMs,
   sortQuotaResetObservationTimeline
 } from "./quota-reset.js";
+
+export {
+  resolveCurrentQuotaWindow,
+  selectLatestQuotaObservation,
+  quotaObservationMatchesWindow,
+  quotaObservationCycleTimestamp
+} from "./quota-current.js";
+export { anchorQuotaCycleBounds } from "./quota-current.js";

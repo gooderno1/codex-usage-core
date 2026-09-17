@@ -9,6 +9,7 @@ import type {
   QuotaUsageSegment
 } from "./contracts.js";
 import { quotaWindowDurationsMatch } from "./quota-window.js";
+import { isObservationBeforeResetWindow } from "./quota-current.js";
 
 const DEFAULT_DROP_THRESHOLD_PERCENT = 5;
 const DEFAULT_HIGH_WATER_PERCENT = 50;
@@ -151,7 +152,8 @@ function findFirstTimedObservationIndex(timedObservations: TimedQuotaObservation
 function confirmQuotaResetCandidate(
   candidate: QuotaResetCandidate,
   timedObservations: TimedQuotaObservation[],
-  options: RequiredQuotaOptions
+  options: RequiredQuotaOptions,
+  subsequentResets: QuotaResetEvent[] = []
 ): QuotaResetConfirmation {
   const candidateAtMs = new Date(candidate.at).getTime();
   const candidateBoundaryMs = candidate.evidence.afterBoundaryAt
@@ -166,7 +168,12 @@ function confirmQuotaResetCandidate(
   }
 
   const confirmationStartMs = candidateAtMs + options.confirmationDelayMs;
-  const confirmationEndMs = candidateAtMs + options.confirmationWindowMs;
+  const nextResetAt = subsequentResets
+    .filter(event => Date.parse(event.at) > candidateAtMs &&
+      Math.abs(Date.parse(event.beforeWindowResetsAt ?? "") - Date.parse(candidate.afterWindowResetsAt ?? "")) <= options.boundarySnapWindowMs &&
+      Date.parse(event.boundaryAt ?? "") > candidateBoundaryMs + options.boundaryDriftToleranceMs)
+    .reduce((end, event) => Math.min(end, Date.parse(event.at) - 1), Infinity);
+  const confirmationEndMs = Math.min(candidateAtMs + options.confirmationWindowMs, nextResetAt);
   const postCandidateObservations: TimedQuotaObservation[] = [];
   for (
     let index = findFirstTimedObservationIndex(timedObservations, confirmationStartMs);
@@ -182,6 +189,9 @@ function confirmQuotaResetCandidate(
       break;
     }
 
+    // 旧窗口的迟到记录不构成新窗口漂移；不同窗口时长也不能参与确认。
+    if (!quotaWindowDurationsMatch(item.observation.windowMinutes, candidate.afterWindowMinutes ?? null) ||
+        isObservationBeforeResetWindow(item.observation, candidate, options.boundarySnapWindowMs)) continue;
     postCandidateObservations.push(item);
   }
 
@@ -228,7 +238,7 @@ function confirmQuotaResetCandidate(
 
 export function sortQuotaResetObservationTimeline(observations: QuotaCycleObservation[]) {
   return observations
-    .filter((item) => item.observedAt && Number.isFinite(item.usedPercent))
+    .filter((item) => Number.isFinite(Date.parse(item.observedAt)) && Number.isFinite(item.usedPercent) && item.usedPercent >= 0 && item.usedPercent <= 100)
     .sort((left, right) => {
       const timeDiff = new Date(left.observedAt).getTime() - new Date(right.observedAt).getTime();
       if (timeDiff !== 0) {
@@ -535,46 +545,31 @@ export function analyzeQuotaObservations(
     }
   }
 
-  const confirmedCandidates = resetCandidates
-    .map((candidate) => ({
-      ...candidate,
-      confirmation: confirmQuotaResetCandidate(candidate, orderedTimings, options)
-    }))
-    .filter((candidate) => candidate.confirmation.status === "confirmed");
+  // 从后向前确认，后一个已确认的独立 reset 是前一个确认区间的终点。
+  const confirmedCandidates: QuotaResetEvent[] = [];
+  for (const candidate of resetCandidates.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))) {
+    const confirmation = confirmQuotaResetCandidate(candidate, orderedTimings, options, confirmedCandidates);
+    if (confirmation.status === "confirmed") confirmedCandidates.push({ ...candidate, confirmation });
+  }
 
   const resetEvents: QuotaResetEvent[] = [];
   for (const candidate of confirmedCandidates.sort(
     (left, right) => new Date(left.at).getTime() - new Date(right.at).getTime()
   )) {
-    const candidateAtMs = new Date(candidate.at).getTime();
     const duplicate = resetEvents.some((event) => {
-      const eventAtMs = new Date(event.at).getTime();
       const eventBoundaryMs = event.evidence?.afterBoundaryAt
         ? new Date(event.evidence.afterBoundaryAt).getTime()
         : Number.NaN;
       const candidateBoundaryMs = candidate.evidence?.afterBoundaryAt
         ? new Date(candidate.evidence.afterBoundaryAt).getTime()
         : Number.NaN;
-      const eventAfterResetMs = new Date(event.afterWindowResetsAt ?? 0).getTime();
-      const candidateAfterResetMs = new Date(candidate.afterWindowResetsAt ?? 0).getTime();
       const sameWindowBoundary =
         Number.isFinite(eventBoundaryMs) &&
         Number.isFinite(candidateBoundaryMs) &&
         Math.abs(candidateBoundaryMs - eventBoundaryMs) <= options.boundaryDriftToleranceMs;
 
-      if (sameWindowBoundary) {
-        return true;
-      }
-
-      return (
-        Number.isFinite(candidateAtMs) &&
-        Number.isFinite(eventAtMs) &&
-        Math.abs(candidateAtMs - eventAtMs) <= options.dedupeWindowMs &&
-        Math.abs(candidate.beforeUsedPercent - event.beforeUsedPercent) <= 1 &&
-        (!Number.isFinite(eventAfterResetMs) ||
-          !Number.isFinite(candidateAfterResetMs) ||
-          Math.abs(candidateAfterResetMs - eventAfterResetMs) <= options.dedupeWindowMs)
-      );
+      // 只有相同窗口才去重，不能因时间接近和百分比相同合并两个独立 reset。
+      return sameWindowBoundary;
     });
 
     if (!duplicate) {

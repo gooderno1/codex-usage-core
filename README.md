@@ -13,6 +13,13 @@
 
 ## 当前能力
 
+- `resolveCurrentQuotaWindow` 校验当前值：拒绝无效时间、非有限或越界百分比、非正时长、已过期窗口，以及提前观测超过 `5min` 的未来窗口；余量始终为 `100 - usedPercent`，不依赖 reset 确认。
+- `selectLatestQuotaObservation` 在同池同类窗口中选最新有效观测。截止时间后移超过 `60s` 且百分比下降至少 `5` 点时，淘汰已经被取代的旧窗口身份；这项选择不等于确认历史 reset。
+- `quotaObservationMatchesWindow` 以相同截止时刻和匹配时长隔离当前周期证据；`quotaObservationCycleTimestamp` 把已确认 reset 的旧窗口迟到记录映射回旧周期，不修改原始时间。
+- `anchorQuotaCycleBounds` 以当前窗口的实际起止约束当前周期；历史 reset 尚未确认也不能把当前 Token 放入旧窗口。
+- reset 确认仍要求 `30min` 后、`6h` 内的稳定证据；旧窗口迟到不再当作漂移。后续已确认的独立 reset 结束前一个确认区间；仅同窗口边界在 `15min` 容差内去重，不再按相似用量和 `12h` 接近合并不同窗口。
+- 真实的新边界漂移仍拒绝确认；当前值与历史累计值必须由下游分别展示。
+
 - 共享 `QuotaCycleObservation`、`QuotaResetEvent`、`QuotaUsageSegment` 等类型。
 - 按 `windowMinutes` 将额度窗口识别为 `five-hour / weekly / unknown`；兼容新版仅返回 `primary=10080`、`secondary=null` 的周额度契约。
 - 分析 5H / 周额度观测序列。
