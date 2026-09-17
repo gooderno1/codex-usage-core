@@ -28,20 +28,11 @@ export function selectLatestQuotaObservation(observations: QuotaCycleObservation
     Date.parse(a.observedAt) - Date.parse(b.observedAt) ||
     Date.parse(a.resetsAt!) - Date.parse(b.resetsAt!) || b.usedPercent - a.usedPercent
   );
-  const retired = new Set<string>();
-  const key = (item: QuotaCycleObservation) => `${item.windowMinutes}/${Date.parse(item.resetsAt!)}`;
-  let latest: QuotaCycleObservation | null = null;
-  for (const item of valid) {
-    if (retired.has(key(item))) continue;
-    if (latest && quotaWindowDurationsMatch(latest.windowMinutes, item.windowMinutes) &&
-        Date.parse(item.resetsAt!) > Date.parse(latest.resetsAt!) + 60_000 &&
-        latest.usedPercent - item.usedPercent >= 5) {
-      // 只淘汰已观测到被新窗口取代的身份；这不等于确认历史 reset。
-      retired.add(key(latest));
-    }
-    latest = item;
-  }
-  return latest;
+  if (valid.length === 0) return null;
+  // 当前窗口身份先于写入时间；即使首次新观测已消耗很多、没有百分比下降，
+  // 旧窗口也不能因迟到而复活。这不是历史 reset 检测，不应用其下降阈值。
+  const newestEnd = Math.max(...valid.map(item => Date.parse(item.resetsAt!)));
+  return valid.filter(item => Date.parse(item.resetsAt!) >= newestEnd - 60_000).at(-1) ?? null;
 }
 
 /** 窗口身份由截止时间和时长决定，记录时间不能将旧窗口变成新窗口。 */

@@ -9,6 +9,8 @@ const base = observations.slice(0, 4);
 const result = analyzeQuotaObservations(observations, { comparisonScope: "timeline" });
 assert.equal(result.resetCount, 1, "旧窗口迟到不能否定已稳定 reset");
 assert.equal(selectLatestQuotaObservation(observations, now)?.usedPercent, 5, "回退不得倒退到已淘汰旧窗口");
+const noDrop = observations.map(item => ({ ...item, usedPercent: item.resetsAt === "2026-09-23T08:00:00Z" ? 99 : 98 }));
+assert.equal(selectLatestQuotaObservation(noDrop, now)?.usedPercent, 99, "新窗口首条观测没有下降时，仍不能被迟到的旧窗口覆盖");
 assert.equal(resolveCurrentQuotaWindow(observations[2]!, now)?.remainingPercent, 100, "当前值不等待历史确认");
 assert.equal(quotaObservationMatchesWindow(observations[1]!, observations[2]!), false);
 assert.ok(Date.parse(quotaObservationCycleTimestamp(observations[1]!, result.resetEvents)) < Date.parse("2026-09-16T08:00:00Z"));
