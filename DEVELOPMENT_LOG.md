@@ -8,7 +8,8 @@
 - 验证样例：1000 条密集高水位后边界前移，仍选最近并列高水位 16:39；逆序输入结果一致。
 - 当前结果：固定 55,866 条本地有效周观测，完整分析结果深度相等；同机一次对比从 32.12s 降至 8.31s。真实数据和分析明细不入库。
 - 验证方式：npm test（含构建、历史 reset、当前额度和新增密集观测回归）；独立进程比较 dev.3 / dev.4 完整输出；git diff --check。
-- 下游同步：Companion 目标 v0.7.0-dev.1、dev-ledger 目标 v0.14.0-dev.29，均固定远程 tag v0.2.0-dev.4；本次 tag 发布后继续完成两个下游依赖更新和各自构建 / 回归记录。
+- 下游同步：Companion v0.7.0-dev.1（ff2bfee，codex/quota-estimation）和 dev-ledger v0.14.0-dev.29（8b21c83）均固定远程 tag v0.2.0-dev.4，已提交推送。
+- 下游验证：Companion 构建、用量 / 当前额度 / 估算 / 通知 / 更新器回归和真实数据 Electron 页面检查通过；dev-ledger 脱敏隔离环境的完整 verify 通过，包含构建、挂件、Agent / Master、本机 HTTP 流程。结果详情保留在各项目开发记录。
 
 ## [2026-09-17] v0.2.0-dev.3 fix(quota): 当前窗口选择不依赖用量下降
 
