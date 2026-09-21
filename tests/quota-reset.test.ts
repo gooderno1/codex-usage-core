@@ -166,6 +166,19 @@ function addStableObservations(
   assert.equal(result.resetCount, 0);
 }
 
+{
+  // 密集时间线仍应从同一回看区间选出最近的并列高水位，乱序输入结果一致。
+  const start = Date.parse("2026-06-29T00:00:00.000Z");
+  const dense = Array.from({ length: 1000 }, (_, i) => observation(new Date(start + i * 60_000).toISOString(), 15, "2026-07-06T01:01:36.000Z"));
+  dense.push(observation("2026-06-30T03:10:00.000Z", 0, "2026-07-06T01:01:36.000Z"));
+  dense.push(observation("2026-06-30T03:56:42.332Z", 0, "2026-07-07T03:22:09.000Z"));
+  addStableObservations(dense, "2026-06-30T04:30:00.000Z", "2026-07-07T03:22:09.000Z", 4);
+  const result = analyzeQuotaObservations(dense, { comparisonScope: "timeline" });
+  assert.equal(result.resetCount, 1);
+  assert.equal(result.resetEvents[0]?.evidence?.lookbackObservedAt, "2026-06-29T16:39:00.000Z");
+  assert.deepEqual(analyzeQuotaObservations([...dense].reverse(), { comparisonScope: "timeline" }), result);
+}
+
 function rateLimitSnapshot(
   usedPercent: number,
   resetsAt: string,

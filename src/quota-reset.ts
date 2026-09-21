@@ -308,17 +308,21 @@ function addStabilizedBoundaryResetCandidates(
   comparisonScope: QuotaResetComparisonScope,
   options: RequiredQuotaOptions
 ) {
-  const sourceOrdered = sortQuotaResetObservationTimeline(observations);
+  // 同一个观测会进入多个 24h 回看区间；时间转换只做一次，保留原有排序及判断。
+  const sourceOrdered = sortQuotaResetObservationTimeline(observations).map(observation => ({
+    observation,
+    observedMs: new Date(observation.observedAt).getTime(),
+    resetMs: observation.resetsAt ? new Date(observation.resetsAt).getTime() : Number.NaN,
+    boundaryMs: getQuotaObservationBoundaryMs(observation)
+  }));
 
   for (let index = 1; index < sourceOrdered.length; index += 1) {
-    const current = sourceOrdered[index];
-    if (!current) {
+    const currentTiming = sourceOrdered[index];
+    if (!currentTiming) {
       continue;
     }
 
-    const currentObservedMs = new Date(current.observedAt).getTime();
-    const currentResetMs = current.resetsAt ? new Date(current.resetsAt).getTime() : Number.NaN;
-    const currentBoundaryMs = getQuotaObservationBoundaryMs(current);
+    const { observation: current, observedMs: currentObservedMs, resetMs: currentResetMs, boundaryMs: currentBoundaryMs } = currentTiming;
 
     if (
       !Number.isFinite(current.usedPercent) ||
@@ -333,12 +337,12 @@ function addStabilizedBoundaryResetCandidates(
     let bestPrevious: QuotaCycleObservation | null = null;
 
     for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
-      const previous = sourceOrdered[previousIndex];
-      if (!previous) {
+      const previousTiming = sourceOrdered[previousIndex];
+      if (!previousTiming) {
         continue;
       }
 
-      const previousObservedMs = new Date(previous.observedAt).getTime();
+      const { observation: previous, observedMs: previousObservedMs, resetMs: previousResetMs, boundaryMs: previousBoundaryMs } = previousTiming;
       if (!Number.isFinite(previousObservedMs)) {
         continue;
       }
@@ -347,21 +351,20 @@ function addStabilizedBoundaryResetCandidates(
         break;
       }
 
-      const previousResetMs = previous.resetsAt ? new Date(previous.resetsAt).getTime() : Number.NaN;
-      const previousBoundaryMs = getQuotaObservationBoundaryMs(previous);
+      // 同一窗口是最常见情况；先检查两个必要条件，避免重复做时长规范化。
+      const resetMovedForward = currentResetMs > previousResetMs + 60 * 1000;
+      const boundaryMovedForward =
+        currentBoundaryMs > previousBoundaryMs + options.boundaryDriftToleranceMs;
+      if (!resetMovedForward || !boundaryMovedForward) {
+        continue;
+      }
+
       if (
         !Number.isFinite(previous.usedPercent) ||
         !Number.isFinite(previousResetMs) ||
         !Number.isFinite(previousBoundaryMs) ||
         !quotaWindowDurationsMatch(previous.windowMinutes, current.windowMinutes)
       ) {
-        continue;
-      }
-
-      const resetMovedForward = currentResetMs > previousResetMs + 60 * 1000;
-      const boundaryMovedForward =
-        currentBoundaryMs > previousBoundaryMs + options.boundaryDriftToleranceMs;
-      if (!resetMovedForward || !boundaryMovedForward) {
         continue;
       }
 
